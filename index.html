@@ -16,6 +16,13 @@ var rsa = forge.pki.rsa;
 var pki = forge.pki;
 var asn1 = forge.asn1;
 
+var seed = {
+    "ip": "208.68.164.253",
+    "port": 42424,
+    "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"}
+seed.public = pki.publicKeyFromPem(seed.pubkey);
+seed.hashname = key2hn(seed.public);
+
 function getId(callback)
 {
 	if(localStorage.pubkey)
@@ -53,24 +60,29 @@ function key2hn(pubkey)
 
 getId(function(id){
 	document.forms[0][0].value = key2hn(id.public);
-	openize(id);
+	openize(id, seed);
 })
 
-var c = getSECCurveByName("secp256r1");
-//var curve = new ECCurveFp(c.getCurve().getQ(), c.getCurve().getA().toBigInteger(), c.getCurve().getB().toBigInteger());
-//console.log(curve);
-var n = c.getN();
-var n1 = n.subtract(BigInteger.ONE);
-var r = new BigInteger(n.bitLength(), new SecureRandom());
-var priecc = r.mod(n1).add(BigInteger.ONE);
-//console.log(priecc);
+function ecKey()
+{
+	var c = getSECCurveByName("secp256r1");
+	//var curve = new ECCurveFp(c.getCurve().getQ(), c.getCurve().getA().toBigInteger(), c.getCurve().getB().toBigInteger());
+	//console.log(curve);
+	var n = c.getN();
+	var n1 = n.subtract(BigInteger.ONE);
+	var r = new BigInteger(n.bitLength(), new SecureRandom());
+	var priecc = r.mod(n1).add(BigInteger.ONE);
+	//console.log(priecc);
 
-//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
-//console.log(G);
-var P = c.getG().multiply(priecc);
-document.forms[0][1].value = P.getX().toBigInteger().toString(16);
-document.forms[0][2].value = P.getY().toBigInteger().toString(16);
-//console.log(forge.util.createBuffer(forge.util.hexToBytes(P.getX().toBigInteger().toString(16))).toHex());
+	//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
+	//console.log(G);
+	var P = c.getG().multiply(priecc);
+	document.forms[0][1].value = P.getX().toBigInteger().toString(16);
+	document.forms[0][2].value = P.getY().toBigInteger().toString(16);
+	P.uncompressed = forge.util.hexToBytes("04"+P.getX().toBigInteger().toString(16)+P.getY().toBigInteger().toString(16));
+	//console.log(forge.util.createBuffer(forge.util.hexToBytes(P.getX().toBigInteger().toString(16))).toHex());
+	return {curve:c, private:priecc, public:P}
+}
 
 function encode(js, body)
 {
@@ -87,18 +99,35 @@ function encode(js, body)
   return ret;
 }
 
-function openize(id)
+function openize(id, to)
 {
+	var ecc = ecKey();
 	var inner = {}
 	inner.at = Date.now();
-	inner.to = "851042800434dd49c45299c6c3fc69ab427ec49862739b6449e1fcd77b27d3a6";
+	inner.to = to.hashname;
 	inner.line = forge.util.bytesToHex(forge.random.getBytesSync(16));
 	var body = encode(inner, asn1.toDer(pki.publicKeyToAsn1(id.public)).getBytes());
 	var open = {};
-	open.iv = forge.util.bytesToHex(forge.random.getBytesSync(16));
+	var iv = forge.random.getBytesSync(16);
+	open.iv = forge.util.bytesToHex(iv);
+
+	// now encrypt the body
+	var md = forge.md.sha256.create();
+	md.update(ecc.public.uncompressed);
+	var cipher = forge.aes.createEncryptionCipher(md.digest(), "CTR");
+	cipher.start(iv);
+	cipher.update(body);
+	cipher.finish();
+	body = cipher.output;
+	console.log(body.length());
+
+	// sign
 	var md = forge.md.sha256.create();
 	md.update(body.getBytes());
 	open.sig = forge.util.encode64(id.private.sign(md));
+
+	// encrypt the ecc key
+	open.open = forge.util.encode64(to.public.encrypt(ecc.public.uncompressed, "RSA-OAEP"));
 	console.log(open);
 }
 
