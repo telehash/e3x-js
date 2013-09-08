@@ -1,0 +1,108 @@
+<html>
+<head>
+	<script src="forge.min.js"></script>
+	<script src="jsbn.js"></script>
+	<script src="jsbn2.js"></script>
+	<script src="ec.js"></script>
+	<script src="sec.js"></script>
+	<script src="prng4.js"></script>
+	<script src="rng.js"></script>
+</head>
+<body>
+	<h1>hi</h1>
+	<form><input size="100"><br><input size="50"><input size="50"></form>
+	<script>
+var rsa = forge.pki.rsa;
+var pki = forge.pki;
+var asn1 = forge.asn1;
+
+function getId(callback)
+{
+	if(localStorage.pubkey)
+	{
+		var ret = {public:pki.publicKeyFromPem(localStorage.pubkey), private:pki.privateKeyFromPem(localStorage.prikey)}
+		console.log("returning key",ret);
+		return callback(ret);
+	}
+
+	// generate/save one nicely
+	console.log("generating 2048 rsa keypair");
+	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
+	var steps = 0;
+	var step = function() {
+	  // run for 100 ms
+	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
+		console.log("step",steps++);
+	    setTimeout(step, 1);
+	  } else {
+		localStorage.pubkey = pki.publicKeyToPem(state.keys.publicKey);
+		localStorage.prikey = pki.privateKeyToPem(state.keys.privateKey);
+		getId(callback);
+	  }
+	};
+	setTimeout(step);	
+}
+
+function key2hn(pubkey)
+{
+	var der = asn1.toDer(pki.publicKeyToAsn1(pubkey));
+	var md = forge.md.sha256.create();
+	md.update(der.getBytes());
+	return md.digest().toHex();	
+}
+
+getId(function(id){
+	document.forms[0][0].value = key2hn(id.public);
+	openize(id);
+})
+
+var c = getSECCurveByName("secp256r1");
+//var curve = new ECCurveFp(c.getCurve().getQ(), c.getCurve().getA().toBigInteger(), c.getCurve().getB().toBigInteger());
+//console.log(curve);
+var n = c.getN();
+var n1 = n.subtract(BigInteger.ONE);
+var r = new BigInteger(n.bitLength(), new SecureRandom());
+var priecc = r.mod(n1).add(BigInteger.ONE);
+//console.log(priecc);
+
+//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
+//console.log(G);
+var P = c.getG().multiply(priecc);
+document.forms[0][1].value = P.getX().toBigInteger().toString(16);
+document.forms[0][2].value = P.getY().toBigInteger().toString(16);
+//console.log(forge.util.createBuffer(forge.util.hexToBytes(P.getX().toBigInteger().toString(16))).toHex());
+
+function encode(js, body)
+{
+
+  var jsbuf = forge.util.createBuffer(JSON.stringify(js), "utf8");
+  var len = jsbuf.length()
+  var ret = forge.util.createBuffer();
+  // network order
+  ret.putByte((0xff & (len >> 8)));
+  ret.putByte((0xff & (len)));
+  ret.putBytes(jsbuf.getBytes());
+  ret.putBytes(body);
+//  console.log(ret.length(),ret.toHex());
+  return ret;
+}
+
+function openize(id)
+{
+	var inner = {}
+	inner.at = Date.now();
+	inner.to = "851042800434dd49c45299c6c3fc69ab427ec49862739b6449e1fcd77b27d3a6";
+	inner.line = forge.util.bytesToHex(forge.random.getBytesSync(16));
+	var body = encode(inner, asn1.toDer(pki.publicKeyToAsn1(id.public)).getBytes());
+	var open = {};
+	open.iv = forge.util.bytesToHex(forge.random.getBytesSync(16));
+	var md = forge.md.sha256.create();
+	md.update(body.getBytes());
+	open.sig = forge.util.encode64(id.private.sign(md));
+	console.log(open);
+}
+
+
+	</script>
+</body>
+</html>
