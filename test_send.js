@@ -19,7 +19,7 @@ client.send(packet, 0, packet.length, process.argv[3], process.argv[2], function
 //  client.close();
 });
 client.on("message", function(msg, rinfo){
-  console.log(rinfo, msg);
+  console.log(rinfo, msg.toString("hex"));
 })
 
 function encode(js, body)

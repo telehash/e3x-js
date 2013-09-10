@@ -13,7 +13,8 @@
 	<form>
 		<input size="100"><br>
 		<input size="50"><input size="50"><br>
-		<textarea cols="100" rows="20"></textarea>
+		<textarea cols="100" rows="20"></textarea><br>
+		<textarea cols="100" rows="20"></textarea><input type="button" value="go" onclick="otest()">
 	</form>
 	<script>
 var rsa = forge.pki.rsa;
@@ -92,7 +93,7 @@ function ecKey()
 	document.forms[0][2].value = P.getY().toBigInteger().toString(16);
 	P.uncompressed = forge.util.hexToBytes("04"+P.getX().toBigInteger().toString(16)+P.getY().toBigInteger().toString(16));
 	//console.log(forge.util.createBuffer(forge.util.hexToBytes(P.getX().toBigInteger().toString(16))).toHex());
-	return {curve:c, private:priecc, public:P}
+	return {curve:c, private:priecc, public:P};
 }
 
 function encode(js, body)
@@ -102,17 +103,17 @@ function encode(js, body)
   var len = jsbuf.length()
   var ret = forge.util.createBuffer();
   // network order
-  ret.putByte((0xff & (len >> 8)));
-  ret.putByte((0xff & (len)));
+  ret.putInt16(len);
   ret.putBytes(jsbuf.getBytes());
   ret.putBytes(body);
 //  console.log(ret.length(),ret.toHex());
   return ret;
 }
 
+var ecc;
 function openize(id, to)
 {
-	var ecc = ecKey();
+	ecc = ecKey();
 	var inner = {}
 	inner.at = Date.now();
 	inner.to = to.hashname;
@@ -139,8 +140,72 @@ function openize(id, to)
 	// encrypt the ecc key
 	open.open = forge.util.encode64(to.public.encrypt(ecc.public.uncompressed, "RSA-OAEP"));
 	console.log(open, body.length());
-	document.forms[0][3].value = encode(open, body.bytes()).toHex();
-	
+	var packet = encode(open, body.bytes());
+	document.forms[0][3].value = packet.toHex()
+}
+
+function otest()
+{
+	var packet = forge.util.hexToBytes(document.forms[0][4].value);
+	getId(function(id){
+		deopenize(id, packet);
+	});
+}
+
+
+function decode(packet)
+{
+  if(typeof packet == "string") packet = forge.util.createBuffer(packet);
+  var len = packet.getInt16(packet);
+  if(packet.length() < len) return console.log("json too short",len,packet.length()) && false;
+  var jsonb = packet.getBytes(len);
+  var body = packet.getBytes();
+  var js;
+  try{ js = JSON.parse(jsonb); } catch(E){ return console.log("parse failed",jsonb) && false; }
+  return {js:js, body:body};
+}
+
+function deopenize(id, packet)
+{
+	var open = decode(packet);
+	if(!open) return console.log("couldn't parse",packet);
+	console.log(open);
+	// decrypt the ecc key
+	var dec = forge.util.decode64(open.js.open);
+	var ecpub = id.private.decrypt(dec, "RSA-OAEP");
+	console.log(ecpub.length);
+	// compose the aes key
+	var md = forge.md.sha256.create();
+	md.update(ecpub);
+	var cipher = forge.aes.createDecryptionCipher(md.digest(), "CTR");
+	cipher.start(forge.util.hexToBytes(open.js.iv));
+	cipher.update(forge.util.createBuffer(open.body));
+	cipher.finish();
+	var inner = decode(cipher.output);
+	console.log(inner);
+	var rsapub = pki.publicKeyFromAsn1(asn1.fromDer(inner.body));
+	console.log("from", key2hn(rsapub));
+	var md = forge.md.sha256.create()
+	md.update(open.body);
+	var verify = rsapub.verify(md.digest().bytes(), forge.util.decode64(open.js.sig));
+	console.log("verify", verify);
+	ecdh(ecc.private, ecpub);
+}
+
+function ecdh(priv, pubbytes) {
+  var curve = getSECCurveByName("secp256r1").getCurve();
+  var uncompressed = forge.util.createBuffer(pubbytes);
+console.log(uncompressed.length(), uncompressed.bytes());
+  uncompressed.getByte(); // chop off the 0x04
+  var x = uncompressed.getBytes(32);
+  var y = uncompressed.getBytes(32);
+console.log(x.length, y.length);
+  if(y.length != 32) return false;
+  var P = new ECPointFp(curve,
+    curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(x), 16)),
+    curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(y), 16)));
+  var S = P.multiply(priv);
+  console.log("shared secret",S.getX().toBigInteger().toString(16));
 }
 
 
