@@ -1,12 +1,13 @@
 <html>
 <head>
-	<script src="forge.min.js"></script>
-	<script src="jsbn.js"></script>
-	<script src="jsbn2.js"></script>
-	<script src="ec.js"></script>
-	<script src="sec.js"></script>
-	<script src="prng4.js"></script>
-	<script src="rng.js"></script>
+	<script src="../thjs.bundle.js"></script>
+	<script src="../includes/forge.min.js"></script>
+	<script src="../includes/jsbn.js"></script>
+	<script src="../includes/jsbn2.js"></script>
+	<script src="../includes/ec.js"></script>
+	<script src="../includes/sec.js"></script>
+	<script src="../includes/prng4.js"></script>
+	<script src="../includes/rng.js"></script>
 </head>
 <body>
 	<h1>hi</h1>
@@ -21,6 +22,7 @@ var rsa = forge.pki.rsa;
 var pki = forge.pki;
 var asn1 = forge.asn1;
 
+console.log("THJS",thjs);
 var seed = {
     "ip": "208.68.164.253",
     "port": 42424,
