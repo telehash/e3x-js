@@ -1,12 +1,8 @@
 {
 	"name": "thjs",
 	"version": "0.0.1",
-	"main": "lib/lib.js",
-	"scripts": {
-		"prepublish": "browserify -s thjs thjs.js > thjs.bundle.js"
-	},
 	"devDependencies": {
-		"browserify": "*"
+		"socket.io": "*"
 	},
 	"repository": {
 		"type": "git",

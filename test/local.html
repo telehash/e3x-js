@@ -1,6 +1,5 @@
 <html>
 <head>
-	<script src="../thjs.bundle.js"></script>
 	<script src="../includes/forge.min.js"></script>
 	<script src="../includes/jsbn.js"></script>
 	<script src="../includes/jsbn2.js"></script>
@@ -8,6 +7,9 @@
 	<script src="../includes/sec.js"></script>
 	<script src="../includes/prng4.js"></script>
 	<script src="../includes/rng.js"></script>
+	<script src="../lib/dhash.js"></script>
+	<script src="../lib/util.js"></script>
+	<script src="../lib/open.js"></script>
 </head>
 <body>
 	<h1>hi</h1>
@@ -22,7 +24,6 @@ var rsa = forge.pki.rsa;
 var pki = forge.pki;
 var asn1 = forge.asn1;
 
-console.log("THJS",thjs);
 var seed = {
     "ip": "208.68.164.253",
     "port": 42424,
@@ -64,13 +65,6 @@ function getId(callback)
 	setTimeout(step);	
 }
 
-function key2hn(pubkey)
-{
-	var der = asn1.toDer(pki.publicKeyToAsn1(pubkey));
-	var md = forge.md.sha256.create();
-	md.update(der.getBytes());
-	return md.digest().toHex();	
-}
 
 getId(function(id){
 	document.forms[0][0].value = key2hn(id.public);
@@ -98,19 +92,6 @@ function ecKey()
 	return {curve:c, private:priecc, public:P};
 }
 
-function encode(js, body)
-{
-
-  var jsbuf = forge.util.createBuffer(JSON.stringify(js), "utf8");
-  var len = jsbuf.length()
-  var ret = forge.util.createBuffer();
-  // network order
-  ret.putInt16(len);
-  ret.putBytes(jsbuf.getBytes());
-  ret.putBytes(body);
-//  console.log(ret.length(),ret.toHex());
-  return ret;
-}
 
 var ecc;
 function openize(id, to)
@@ -120,7 +101,7 @@ function openize(id, to)
 	inner.at = Date.now();
 	inner.to = to.hashname;
 	inner.line = forge.util.bytesToHex(forge.random.getBytesSync(16));
-	var body = encode(inner, asn1.toDer(pki.publicKeyToAsn1(id.public)).bytes());
+	var body = pencode(inner, asn1.toDer(pki.publicKeyToAsn1(id.public)).bytes());
 	var open = {type:"open"};
 	var iv = forge.random.getBytesSync(16);
 	open.iv = forge.util.bytesToHex(iv);
@@ -142,7 +123,7 @@ function openize(id, to)
 	// encrypt the ecc key
 	open.open = forge.util.encode64(to.public.encrypt(ecc.public.uncompressed, "RSA-OAEP"));
 	console.log(open, body.length());
-	var packet = encode(open, body.bytes());
+	var packet = pencode(open, body.bytes());
 	document.forms[0][3].value = packet.toHex()
 }
 
@@ -155,21 +136,10 @@ function otest()
 }
 
 
-function decode(packet)
-{
-  if(typeof packet == "string") packet = forge.util.createBuffer(packet);
-  var len = packet.getInt16(packet);
-  if(packet.length() < len) return console.log("json too short",len,packet.length()) && false;
-  var jsonb = packet.getBytes(len);
-  var body = packet.getBytes();
-  var js;
-  try{ js = JSON.parse(jsonb); } catch(E){ return console.log("parse failed",jsonb) && false; }
-  return {js:js, body:body};
-}
 
 function deopenize(id, packet)
 {
-	var open = decode(packet);
+	var open = pdecode(packet);
 	if(!open) return console.log("couldn't parse",packet);
 	console.log(open);
 	// decrypt the ecc key
@@ -183,7 +153,7 @@ function deopenize(id, packet)
 	cipher.start(forge.util.hexToBytes(open.js.iv));
 	cipher.update(forge.util.createBuffer(open.body));
 	cipher.finish();
-	var inner = decode(cipher.output);
+	var inner = pdecode(cipher.output);
 	console.log(inner);
 	var rsapub = pki.publicKeyFromAsn1(asn1.fromDer(inner.body));
 	console.log("from", key2hn(rsapub));
