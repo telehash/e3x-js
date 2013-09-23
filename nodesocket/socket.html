@@ -9,22 +9,74 @@
   <script src="/includes/sec.js"></script>
   <script src="/includes/prng4.js"></script>
   <script src="/includes/rng.js"></script>
+	<script src="/lib/dhash.js"></script>
+	<script src="/lib/util.js"></script>
+	<script src="/lib/open.js"></script>
+	<script src="/seeds.js"></script>
   <script src="/socket.io/socket.io.js"></script>
 </head>
 
 <body>
 
   <script>
-    var socket = io.connect(document.URL);
-    socket.on('connected', function (data) {
-      console.log("Socket connected: using " + data.ip + ":" + data.port);
-    });
-    
-    socket.on("message", function(data) {
-      console.log(data.ip + ":" + data.port + " - " + data.message);
-    });
-    
-    socket.emit("message", {ip: "127.0.0.1", port: 8911, message: forge.util.encode64("blah")});
+var open;
+var rsa = forge.pki.rsa;
+var pki = forge.pki;
+var asn1 = forge.asn1;
+
+var seed = seeds[0];
+seed.public = pki.publicKeyFromPem(seed.pubkey);
+seed.hashname = key2hn(seed.public);
+
+getId(function(id){
+	    var socket = io.connect(document.URL);
+	    socket.on('connected', function (data) {
+	      console.log("Socket connected",data);
+	//      socket.emit("message", {ip: "127.0.0.1", port: 8911, message: forge.util.encode64("blah")});
+			open = openize(id, seed);
+			console.log(open);
+			socket.emit("message", {ip:seed.ip, port:seed.port, message:forge.util.encode64(open.packet.bytes())});
+	    });
+
+	    socket.on("message", function(data) {
+			console.log("incoming",data);
+			var packet = forge.util.decode64(data.message);
+			var opened = deopenize(id, packet);
+			var secret = ecdh(open.ecc.private, opened.ecc.public);
+			console.log("secret",secret);
+	    });	
+});
+
+
+function getId(callback)
+{
+	if(localStorage.pubkey)
+	{
+		var ret = {public:pki.publicKeyFromPem(localStorage.pubkey), private:pki.privateKeyFromPem(localStorage.prikey)}
+		console.log("returning key",ret);
+		return callback(ret);
+	}
+
+	// generate/save one nicely
+	console.log("generating 2048 rsa keypair");
+	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
+	var steps = 0;
+	var step = function() {
+	  // run for 100 ms
+	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
+		console.log("step",steps++);
+	    setTimeout(step, 1);
+	  } else {
+		localStorage.pubkey = pki.publicKeyToPem(state.keys.publicKey);
+		localStorage.prikey = pki.privateKeyToPem(state.keys.privateKey);
+		getId(callback);
+	  }
+	};
+	setTimeout(step);	
+}
+
+ 
+  
   </script>
 </body>
 </html>
