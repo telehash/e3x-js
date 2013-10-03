@@ -27,8 +27,8 @@ io.sockets.on("connection", function (socket) {
     socket.emit('connected', {});
   });
   server.on("message", function (msg, rinfo) {
-    console.log("server got: " + msg + " from " + rinfo.address + ":" + rinfo.port)
-    socket.emit("message", {message: msg.toString("base64"), ip: rinfo.address, port: rinfo.port});
+    console.log("server got: " + msg.toString("hex") + " from " + rinfo.address + ":" + rinfo.port)
+    socket.emit("message", {message: msg.toString("base64"), from:{ip: rinfo.address, port: rinfo.port}});
   });
   server.bind();
   socket.on("message", function(data) {

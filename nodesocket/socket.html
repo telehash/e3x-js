@@ -12,6 +12,7 @@
 	<script src="/lib/dhash.js"></script>
 	<script src="/lib/util.js"></script>
 	<script src="/lib/open.js"></script>
+	<script src="/lib/switch.js"></script>
 	<script src="/seeds.js"></script>
   <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -24,27 +25,27 @@ var rsa = forge.pki.rsa;
 var pki = forge.pki;
 var asn1 = forge.asn1;
 
-var seed = seeds[0];
-seed.public = pki.publicKeyFromPem(seed.pubkey);
-seed.hashname = key2hn(seed.public);
+var me;
 
 getId(function(id){
 	    var socket = io.connect(document.URL);
-	    socket.on('connected', function (data) {
-	      console.log("Socket connected",data);
-	//      socket.emit("message", {ip: "127.0.0.1", port: 8911, message: forge.util.encode64("blah")});
-			open = openize(id, seed);
-			console.log(open);
-			socket.emit("message", {ip:seed.ip, port:seed.port, message:forge.util.encode64(open.packet.bytes())});
+	    socket.on('connected', function(data) {
+	    	me = hashname(id, function(to, msg) {
+	    		console.log("sending", to, msg.length);
+	    		socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg)});
+	    	});
+	    	console.log("Socket connected",me);
+				seeds.forEach(me.addSeed);
+				me.online(function(err,to){
+					console.log("online",err);
+					if(to) to.send(pencode({"type":"seek","seek":me.hashname,"stream":"3abc8920b782de8e3df326623fed4217"}));
+				})
 	    });
 
 	    socket.on("message", function(data) {
-			console.log("incoming",data);
-			var packet = forge.util.decode64(data.message);
-			var opened = deopenize(id, packet);
-			var secret = ecdh(open.ecc.private, opened.ecc.public);
-			console.log("secret",secret);
-	    });	
+	    	console.log("incoming", data);
+	    	me.onMessage(forge.util.decode64(data.message), data.from);
+	    });
 });
 
 
