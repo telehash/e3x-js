@@ -33,6 +33,7 @@ function getId(callback)
 	if(localStorage.pubkey)
 	{
 		var ret = {public:pki.publicKeyFromPem(localStorage.pubkey), private:pki.privateKeyFromPem(localStorage.prikey)}
+    ret.der = asn1.toDer(pki.publicKeyToAsn1(ret.public)).bytes();
 		console.log("returning key",ret);
 		return callback(ret);
 	}
@@ -56,11 +57,10 @@ function getId(callback)
 }
 
 
-var open;
 getId(function(id){
 	document.forms[0][0].value = key2hn(id.public);
-	open = openize(id, seed);
-	document.forms[0][3].value = open.packet.toHex();
+	var open = openize(id, seed);
+	document.forms[0][3].value = forge.util.bytesToHex(open);
 })
 
 
@@ -68,8 +68,8 @@ function otest()
 {
 	var packet = forge.util.hexToBytes(document.forms[0][4].value);
 	getId(function(id){
-		var opened = deopenize(id, packet);
-		var secret = ecdh(open.ecc.private, opened.ecc.public);
+		var opened = deopenize(id, pdecode(packet));
+		var secret = ecdh(seed.ecc.private, opened.ecc);
 		console.log("secret",secret);
 	});
 }
