@@ -30,26 +30,25 @@ getId(function(id){
 	    var socket = io.connect(document.URL);
 	    socket.on('connected', function(data) {
 	    	me = hashname(id, function(to, msg) {
-	    		console.log("sending", to, msg.length);
+	    		console.log("sending", to.hashname, msg.length);
 	    		socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg)});
 	    	});
 	    	console.log("Socket connected",me);
-				seeds.forEach(me.addSeed);
+				seeds.forEach(me.addSeed, me);
 				me.online(function(err,to){
 					console.log("online",err);
 					if(to)
 					{
-						var packet = pencode({"seq":0,"type":"seek","seek":me.hashname,"stream":forge.util.bytesToHex(forge.random.getBytesSync(16))});
-//						packet = packet.bytes();
-						console.log("SENDING",forge.util.bytesToHex(packet.bytes()));
-						to.line(packet);
+            to.seek(me.hashname, function(err, see){
+              console.log("SEE",err,see);
+            });
 					}
 				})
 	    });
 
 	    socket.on("message", function(data) {
-	    	console.log("incoming", data);
-	    	me.onMessage(forge.util.decode64(data.message), data.from);
+	    	console.log("incoming", data.message.length);
+	    	me.receive(forge.util.decode64(data.message), data.from);
 	    });
 });
 

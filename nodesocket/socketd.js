@@ -1,5 +1,6 @@
 var dgram = require("dgram");
 
+var port = process.env.PORT || 8008;
 
 
 
@@ -11,7 +12,7 @@ var httpServer = require("http").createServer(function(req, resp) {
         resp.writeHeader(200, {"Content-Type": "text/html"});
         resp.end(content);
     });
-}).listen(process.env.PORT || 8008);
+}).listen(port, function(){console.log("listening on",port)});
 
 var clients = [];
 var io = require("socket.io").listen(httpServer);
