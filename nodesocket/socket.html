@@ -39,8 +39,8 @@ getId(function(id){
 					console.log("online",err);
 					if(to)
 					{
-            to.seek(me.hashname, function(err, see){
-              console.log("SEE",err,see);
+            me.seek(me.whois("0f83606d57ab52161aec9868725d53f2054d9ae16a91274ffcb20a68a15c0855"), function(err){
+              console.log("SEE",err);
             });
 					}
 				})
