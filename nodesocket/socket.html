@@ -36,13 +36,15 @@ getId(function(id){
 	    	console.log("Socket connected",me);
 				seeds.forEach(me.addSeed, me);
 				me.online(function(err,to){
-					console.log("online",err);
-					if(to)
-					{
-            me.seek(me.whois("0f83606d57ab52161aec9868725d53f2054d9ae16a91274ffcb20a68a15c0855"), function(err){
-              console.log("SEE",err);
-            });
-					}
+					console.log("online",err,me.hashname);
+          if(err) return;
+          me.start("wormhole", function(arg, chan){
+            console.log("TEST",arg);
+            chan.ack(true, {js:{"foo":42}});
+          });
+          me.seek(me.whois("0f83606d57ab52161aec9868725d53f2054d9ae16a91274ffcb20a68a15c0855"), function(err){
+            console.log("SEE",err);
+          });
 				})
 	    });
 
