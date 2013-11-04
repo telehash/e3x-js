@@ -7,8 +7,7 @@
 	<script src="../includes/sec.js"></script>
 	<script src="../includes/prng4.js"></script>
 	<script src="../includes/rng.js"></script>
-	<script src="../lib/util.js"></script>
-	<script src="../lib/open.js"></script>
+	<script src="../thforge.js"></script>
 	<script src="../seeds.js"></script>
 </head>
 <body>
@@ -26,7 +25,7 @@ var asn1 = forge.asn1;
 
 var seed = seeds[0];
 seed.public = pki.publicKeyFromPem(seed.pubkey);
-seed.hashname = key2hn(seed.public);
+seed.hashname = thforge.der2hn(thforge.key2der(seed.public));
 
 function getId(callback)
 {
@@ -58,8 +57,8 @@ function getId(callback)
 
 
 getId(function(id){
-	document.forms[0][0].value = key2hn(id.public);
-	var open = openize(id, seed);
+	document.forms[0][0].value = thforge.der2hn(thforge.key2der(id.public));
+	var open = thforge.openize(id, seed);
 	document.forms[0][3].value = forge.util.bytesToHex(open);
 })
 
@@ -68,8 +67,8 @@ function otest()
 {
 	var packet = forge.util.hexToBytes(document.forms[0][4].value);
 	getId(function(id){
-		var opened = deopenize(id, pdecode(packet));
-		var secret = ecdh(seed.ecc.private, opened.ecc);
+		var opened = thforge.deopenize(id, pdecode(packet));
+		var secret = thforge.ecdh(seed.ecc.private, opened.ecc);
 		console.log("secret",secret);
 	});
 }

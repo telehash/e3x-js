@@ -9,9 +9,8 @@
   <script src="/includes/sec.js"></script>
   <script src="/includes/prng4.js"></script>
   <script src="/includes/rng.js"></script>
-	<script src="/lib/util.js"></script>
-	<script src="/lib/open.js"></script>
-	<script src="/lib/switch.js"></script>
+	<script src="/thjs.js"></script>
+	<script src="/thforge.js"></script>
 	<script src="/seeds.js"></script>
   <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -19,20 +18,15 @@
 <body>
 
   <script>
-var open;
-var rsa = forge.pki.rsa;
-var pki = forge.pki;
-var asn1 = forge.asn1;
 
 var me;
-
 getId(function(id){
 	    var socket = io.connect(document.URL);
 	    socket.on('connected', function(data) {
-	    	me = hashname(id, function(to, msg) {
-	    		console.log("sending", to.hashname, msg.length);
-	    		socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg)});
-	    	});
+	    	me = thjs.hashname(id, function(to, msg) {
+          console.log("sending", to.hashname, msg.length);
+          socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg)});
+        });
 	    	console.log("Socket connected",me);
 				seeds.forEach(me.addSeed, me);
 				me.online(function(err,to){
@@ -59,23 +53,23 @@ function getId(callback)
 {
 	if(localStorage.pubkey)
 	{
-		var ret = {public:pki.publicKeyFromPem(localStorage.pubkey), private:pki.privateKeyFromPem(localStorage.prikey)}
+		var ret = {public:forge.pki.publicKeyFromPem(localStorage.pubkey), private:forge.pki.privateKeyFromPem(localStorage.prikey)}
 		console.log("returning key",ret);
 		return callback(ret);
 	}
 
 	// generate/save one nicely
 	console.log("generating 2048 rsa keypair");
-	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
+	var state = forge.rsa.createKeyPairGenerationState(2048, 0x10001);
 	var steps = 0;
 	var step = function() {
 	  // run for 100 ms
-	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
+	  if(!forge.rsa.stepKeyPairGenerationState(state, 100)) {
 		console.log("step",steps++);
 	    setTimeout(step, 1);
 	  } else {
-		localStorage.pubkey = pki.publicKeyToPem(state.keys.publicKey);
-		localStorage.prikey = pki.privateKeyToPem(state.keys.privateKey);
+		localStorage.pubkey = forge.pki.publicKeyToPem(state.keys.publicKey);
+		localStorage.prikey = forge.pki.privateKeyToPem(state.keys.privateKey);
 		getId(callback);
 	  }
 	};

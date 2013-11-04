@@ -1,3 +1,28 @@
+// this file contains all the forge-based crypto and binary/buffer functions
+// it must be required after thjs is loaded, so that it binds all of it's functions into it
+
+(function(exports){
+
+var rsa = forge.pki.rsa;
+var pki = forge.pki;
+var asn1 = forge.asn1;
+
+// these are all the crypto/binary dependencies needed by thjs
+exports.der2hn = der2hn;
+exports.key2der = key2der;
+exports.der2key = der2key;
+exports.der2der = der2der;
+exports.randomHEX = randomHEX;
+exports.openize = openize;
+exports.deopenize = deopenize;
+exports.openline = openline;
+exports.lineize = lineize;
+exports.delineize = delineize;
+exports.pencode = pencode;
+exports.pdecode = pdecode;
+exports.ecdh = ecdh;
+try{thjs.localize(exports)}catch(E){}
+
 // der format key to string hashname
 function der2hn(der)
 {
@@ -6,9 +31,10 @@ function der2hn(der)
 	return md.digest().toHex();	
 }
 
-// wrapper to get raw der bytes from native key format and vice versa
+// wrapper to get raw der bytes from native key format (or pem) and vice versa
 function key2der(key)
 {
+  if(typeof key == "string") key = pki.publicKeyFromPem(key);
   return asn1.toDer(pki.publicKeyToAsn1(key)).bytes();
 }
 function der2key(der)
@@ -197,3 +223,36 @@ function ecdh(priv, pubbytes) {
   var S = P.multiply(priv);
   return S.getX().toBigInteger().toString(16);
 }
+
+// encode a packet
+function pencode(js, body)
+{
+  var jsbuf = forge.util.createBuffer(js?JSON.stringify(js):"", "utf8");
+  var len = jsbuf.length();
+  var ret = forge.util.createBuffer();
+  // network order
+  ret.putInt16(len);
+  ret.putBytes(jsbuf.getBytes());
+  if(body) ret.putBytes(body);
+  return ret;
+}
+
+// packet decoding
+function pdecode(packet)
+{
+  if(typeof packet == "string") packet = forge.util.createBuffer(packet);
+  var len = packet.getInt16(packet);
+  if(packet.length() < len) return console.log("json too short",len,packet.length()) && false;
+  var jsonb = packet.getBytes(len);
+  var body = packet.getBytes();
+  var js;
+	if(len > 0)
+	{
+	  try{ js = JSON.parse(jsonb); } catch(E){ return console.log("parse failed",jsonb) && false; }		
+	}else{
+		js = {};
+	}
+  return {js:js, body:body};
+}
+
+})(typeof exports === 'undefined'? this['thforge']={}: exports);

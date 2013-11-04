@@ -1,30 +1,30 @@
-var warn = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f)};
+(function(exports){ // browser||node safe wrapper
+
+var warn = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f); return undefined; };
 var debug = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f)};
 
-var defaults = {};
+var defaults = exports.defaults = {};
 defaults.chan_timeout = 10000; // 10 seconds for channels w/ no acks
 defaults.seek_timeout = 3000; // shorter tolerance for seeks, is far more lossy
 
+// dependency functions
+var local;
+exports.localize = function(locals){ local = locals; }
+
 // start a hashname listening and ready to go
-function hashname(key, send, args)
+exports.hashname = function(key, send, args)
 {
-  if(!key || !key.public || !key.private) {
-    warn("bad args to hashname, requires key.public and key.private in forge rsa");
-    return undefined;
-  }
-  if(typeof send !== "function")
-  {
-	  warn("second arg needs to be a function to send packets, is", typeof send);
-		return undefined;
-  }
-  if(!args) args = {};
+  if(!local) return warn("thjs.locals() needs to be called first");
+  if(!key || !key.public || !key.private) return warn("bad args to hashname, requires key.public and key.private");
+  if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
   // configure defaults
+  if(!args) args = {};
   var self = {seeds:[], lines:{}, all:{}, buckets:[], listening:{}};
   self.private = key.private;
   self.public = key.public;
-  self.der = key2der(self.public);
-  self.hashname = der2hn(self.der);
+  self.der = local.key2der(self.public);
+  self.hashname = local.der2hn(self.der);
   self.nat = true;
   if(args.family) self.family = args.family;
   if(args.ip) self.ip = args.ip;
@@ -90,7 +90,7 @@ chan.receive()
 */
 
 // these are called once a channel is started both ways to add type-specific functions for the app
-var channelSetups = {
+exports.channelSetups = {
 	"packet":function(chan){
     // to send raw packets
     chan.packet = function(packet)
@@ -163,10 +163,9 @@ function start(type, callback)
 
 function addSeed(arg) {
   var self = this;
-  if(arg) arg.public = pki.publicKeyFromPem(arg.pubkey);
-  if(!arg.ip || !arg.port || !arg.public) return warn("invalid args to addSeed");
-  var der = key2der(arg.public);
-  var seed = self.whois(der2hn(der));
+  if(!arg.ip || !arg.port || !arg.pubkey) return warn("invalid args to addSeed");
+  var der = local.key2der(arg.pubkey);
+  var seed = self.whois(local.der2hn(der));
   seed.der = der;
   seed.ip = arg.ip;
   seed.port = parseInt(arg.port);
@@ -213,7 +212,7 @@ function online(callback)
 function receive(msg, from)
 {
 	var self = this;
-  var packet = pdecode(msg);
+  var packet = local.pdecode(msg);
   if(!packet) return warn("failed to decode a packet from", from.ip, from.port, msg.toString());
   if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
   if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", packet.sender);
@@ -226,10 +225,10 @@ function receive(msg, from)
   // either it's an open
   if(packet.js.type == "open")
 	{
-    var open = deopenize(self, packet);
+    var open = local.deopenize(self, packet);
     if (!open) return warn("couldn't decode open");
-    var from = self.whois(der2hn(open.rsa));
-    if (!from) return warn("invalid hashname", der2hn(open.rsa), open.rsa);
+    var from = self.whois(local.der2hn(open.rsa));
+    if (!from) return warn("invalid hashname", local.der2hn(open.rsa), open.rsa);
 
     // make sure this open is newer (if any others)
     if (typeof open.js.at != "number" || (from.openAt && open.js.at < from.openAt)) return warn("invalid at", open.js.at);
@@ -255,13 +254,13 @@ function receive(msg, from)
     if (!from.sentOpen) from.open();
 
     // line is open now!
-    openline(from, open);
+    local.openline(from, open);
     
     // replace function to send things via the line
     from.send = function(packet) {
       debug("line sending",from.hashname, packet.js);
       // TODO if line hasn't responded, break it and start over
-      self.send(from, lineize(from, packet));
+      self.send(from, local.lineize(from, packet));
       // TODO if ended, set timer to cleanup
     }
     
@@ -318,7 +317,7 @@ function receive(msg, from)
 	  if(!line) return debug("unknown line received", packet.js.line, packet.sender);
 
 		// decrypt and process
-	  delineize(packet);
+	  local.delineize(packet);
 		if(!packet.lineok) return debug("couldn't decrypt line",packet.sender);
 		line.receive(packet);
     return;
@@ -384,7 +383,7 @@ function whois(hashname)
       Object.keys(hn.vias).forEach(function(via){
         var address = hn.vias[via].split(",");
         var to = {ip:address[1],port:address[2]};
-        self.send(to,pencode().bytes()); // NAT hole punching
+        self.send(to,local.pencode().bytes()); // NAT hole punching
         self.whois(via).peer(hn.hashname); // send the peer request
       });
       delete hn.vias; // so next time it'll re-seek
@@ -437,7 +436,7 @@ function whois(hashname)
   hn.open = function(direct)
   {
     hn.sentOpen = true;
-    var open = openize(self, hn);
+    var open = local.openize(self, hn);
     self.lines[hn.lineOut] = hn;
     self.send(direct||hn, open);
     // when we have a local alternate address, try that too
@@ -520,7 +519,7 @@ function seek(hn, callback)
 function channel(type, id)
 {
   var hn = this;
-	if(!id) id = randomHEX(16);
+	if(!id) id = local.randomHEX(16);
   var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:0, inDups:0, lastAck:-1, type:type, id:id};
 	hn.chans[id] = chan;
   // set flag for app types
@@ -536,8 +535,8 @@ function channel(type, id)
   chan.setup = function(setup)
   {
     var chan = this;
-    if(!channelSetups[setup]) return false;
-    channelSetups[setup](chan);
+    if(!exports.channelSetups[setup]) return false;
+    exports.channelSetups[setup](chan);
     return chan;
   }
 
@@ -667,8 +666,8 @@ function channel(type, id)
 // someone's trying to connect to us, send an open to them
 function inConnect(packet, chan, self)
 {
-  var der = der2der(packet.body);
-  var to = self.whois(der2hn(der));
+  var der = local.der2der(packet.body);
+  var to = self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
   // if no ipp yet, save them
   if(!to.ip) {
@@ -740,3 +739,48 @@ function inSeek(packet, chan, self)
   var answer = {see:self.nearby(packet.js.seek).map(function(hn){ return hn.address; })};  
   chan.ack(true, {js:answer});
 }
+
+// utility functions
+
+// just return true/false if it's at least the format of a sha1
+function isHEX(str, len)
+{
+  if(typeof str !== "string") return false;
+  if(str.length !== len) return false;
+  if(str.replace(/[a-f0-9]+/i, "").length !== 0) return false;
+  return true;
+}
+
+// XOR distance between two hex strings, high is furthest bit, 0 is closest bit, -1 is error
+function dhash(h1, h2) {
+  // convert to nibbles, easier to understand
+  var n1 = hex2nib(h1);
+  var n2 = hex2nib(h2);
+  if(!n1.length || n1.length != n2.length) return -1;
+  // compare nibbles
+  var sbtab = [-1,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3];
+  var ret = 252;
+  for (var i = 0; i < n1.length; i++) {
+      var diff = n1[i] ^ n2[i];
+      if (diff) return ret + sbtab[diff];
+      ret -= 4;
+  }
+  return -1; // samehash
+}
+
+// convert hex string to nibble array
+function hex2nib(hex)
+{
+  var ret = [];
+  for (var i = 0; i < hex.length / 2; i ++) {
+      var bite = parseInt(hex.substr(i * 2, 2), 16);
+      if (isNaN(bite)) return [];
+      ret[ret.length] = bite >> 4;
+      ret[ret.length] = bite & 0xf;
+  }
+  return ret;
+}
+
+
+// our browser||node safe wrapper
+})(typeof exports === 'undefined'? this['thjs']={}: exports);
