@@ -17,14 +17,14 @@ var httpServer = require("http").createServer(function(req, resp) {
 var clients = [];
 var io = require("socket.io").listen(httpServer);
 io.sockets.on("connection", function (socket) {
-  console.log("starting");  
+  console.log("starting",socket.id);  
   var server = dgram.createSocket("udp4");
   server.on("error", function (err) {
     console.log("server error:\n" + err.stack);
     server.close();
   });
   server.on("listening", function() {
-    console.log("connected");
+    console.log("connected",socket.id);
     socket.emit('connected', {});
   });
   server.on("message", function (msg, rinfo) {

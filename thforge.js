@@ -200,9 +200,9 @@ function delineize(packet)
 	cipher.start(forge.util.hexToBytes(packet.js.iv));
 	cipher.update(forge.util.createBuffer(packet.body));
 	cipher.finish();
-	if(!cipher.output) return warn("couldn't decrypt packet",packet.js.line, packet.sender);
+	if(!cipher.output) return console.log("couldn't decrypt packet",packet.js.line, packet.sender);
 	var deciphered = pdecode(cipher.output);
-	if(!deciphered) return warn("invalid decrypted packet", cipher.output);
+	if(!deciphered) return console.log("invalid decrypted packet", cipher.output);
   packet.js = deciphered.js;
   packet.body = deciphered.body;
 	packet.lineok = true;
@@ -242,7 +242,7 @@ function pdecode(packet)
 {
   if(typeof packet == "string") packet = forge.util.createBuffer(packet);
   var len = packet.getInt16(packet);
-  if(packet.length() < len) return console.log("json too short",len,packet.length()) && false;
+  if(packet.length() < len) return console.log("packet too short",len,packet.length(),packet) && false;
   var jsonb = packet.getBytes(len);
   var body = packet.getBytes();
   var js;

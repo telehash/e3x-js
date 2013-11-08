@@ -75,9 +75,8 @@ hn.start(type, arg, callback)
     - chan.packet, onPacket
 self.start(type, callback)
   - used to listen for incoming channel starts
-  - callback(arg, cbStarted)
+  - callback(arg, chan)
     - called for any incoming channel start
-    - to answer, call cbStarted(err, arg), returns chan
     - chan.setup and chan.* from above
 
 // internally
@@ -270,34 +269,35 @@ function receive(msg, from)
       from.recvAt = Date.now();
       if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
       var chan = from.chans[packet.js.c];
-      // start a channel if one doesn't exist
-      if(!chan)
+      if(chan)
       {
-        if(packet.js.seq !== 0) return; // only handle first/start packets
-        if(!self.listening[packet.js.type])
-        {
-          // bounce error
-          if(!packet.js.end)
-          {
-            packet.js.end = true;
-            packet.js.error = "unknown type";
-            warn("bouncing unknown channel/type",packet.js);
-            from.send(packet);            
-          }
-          return;
-        }
-        var chan;
-        // make a channel for any that need to exist yet beyond this
+        chan.receive(packet);
+        // TODO if ended, set timer to cleanup
+        return;
+      }
+      // start a channel if one doesn't exist
+      if(packet.js.seq !== 0) return; // only handle first/start packets
+      if(!self.listening[packet.js.type])
+      {
+        // bounce error
         if(!packet.js.end)
         {
-          chan = from.channel(packet.js.type, packet.js.c);
-          chan.inHandled = 0; // since we need to .ack this first start packet          
+          packet.js.end = true;
+          packet.js.error = "unknown type";
+          warn("bouncing unknown channel/type",packet.js);
+          from.send(packet);            
         }
-        debug("channel listening",from.hashname, packet.js.type, packet.js);
-        return self.listening[packet.js.type](packet, chan, self);
+        return;
       }
-      chan.receive(packet);
-      // TODO if ended, set timer to cleanup
+      var chan;
+      // make a channel for any that need to exist yet beyond this
+      if(!packet.js.end)
+      {
+        chan = from.channel(packet.js.type, packet.js.c);
+        chan.inDone = chan.inHandled = 0; // since we need to .ack this first start packet
+      }
+      debug("channel listening",from.hashname, packet.js.type, packet.js);
+      self.listening[packet.js.type](packet, chan, self);
     }
 
     // if anyone was waiting for a trigger
@@ -546,6 +546,7 @@ function channel(type, id)
 	// process packets at a raw level, handle all miss/ack tracking and ordering
 	chan.receive = function(packet)
 	{
+    console.log("LINEIN",packet,chan);
 	  if(!(packet.js.seq >= 0)) return warn("invalid sequence on stream", packet.js.seq, chan.id, packet.from.address);
 
 	  // so, if there's a lot of "gap" or or dups coming in, be kind and send an update immediately
@@ -592,6 +593,7 @@ function channel(type, id)
   // wrapper to call chan.handle in series
   chan.handler = function()
   {
+    console.log("HANDLER",chan);
     if(!chan.handle) return warn("no chan.handle() function setup?");
     if(chan.handling) return;
     chan.handling = true;
