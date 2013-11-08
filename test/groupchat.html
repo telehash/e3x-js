@@ -2,8 +2,9 @@
 <html>
     <head>
         <title>Chat</title>
-        <link rel="stylesheet" href="http://yui.yahooapis.com/3.3.0/build/cssreset/reset-min.css">
         <style type="text/css">
+        /* reset-min.css */
+html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pre,code,form,fieldset,legend,input,textarea,p,blockquote,th,td{margin:0;padding:0;}table{border-collapse:collapse;border-spacing:0;}fieldset,img{border:0;}address,caption,cite,code,dfn,em,strong,th,var{font-style:normal;font-weight:normal;}li{list-style:none;}caption,th{text-align:left;}h1,h2,h3,h4,h5,h6{font-size:100%;font-weight:normal;}q:before,q:after{content:'';}abbr,acronym{border:0;font-variant:normal;}sup{vertical-align:text-top;}sub{vertical-align:text-bottom;}input,textarea,select{font-family:inherit;font-size:inherit;font-weight:inherit;}input,textarea,select{*font-size:100%;}legend{color:#000;}
 
             /* Global */
             html, body { height: 100%; }
@@ -25,6 +26,8 @@
             .system-message { font-style: italic; }
 
         </style>
+        <script src="jquery.min.js"></script>
+        <script src="jquery.tmpl.min.js"></script>
         <script src="/includes/forge.min.js"></script>
         <script src="/includes/jsbn.js"></script>
         <script src="/includes/jsbn2.js"></script>
@@ -99,8 +102,6 @@
             <li class="system-message">${message}</li>
         </script>
 
-        <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
-        <script src="http://ajax.microsoft.com/ajax/jquery.templates/beta1/jquery.tmpl.min.js"></script>
         <script>
 
             $(document).ready(function() {
