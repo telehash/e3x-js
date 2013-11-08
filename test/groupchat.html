@@ -168,7 +168,8 @@
                         var hosthash = parts[1];
                         var members = {};
                         if(hosthash) {
-                          var host = members[hosthash] = me.whois(hosthash);
+                          var host = me.whois(hosthash);
+                          if(!host) return log("invalid host: "+hosthash);
                           host.start("chat", {js:{nick:nick, room:room}}, handshake);
                           host.start("members", {js:{room:room}}, function(err, arg){
                             if(Array.isArray(arg.js.members)) arg.js.members.forEach(function(member){
@@ -193,11 +194,12 @@
                           chan.setup("message");
                           // send members in chunks
                           var mlist = Object.keys(members);
+                          mlist.push(me.hashname);
                           while(mlist.length > 0)
                           {
                             var chunk = mlist.slice(0, 10);
                             mlist = mlist.slice(10);
-                            chan.message({js:{members:mlist}});
+                            chan.message({js:{members:chunk}});
                             if(mlist.length == 0) chan.end();
                           }
                         });
@@ -208,6 +210,7 @@
                             $("#message-input").val("");
                             chat(nick, message);
                             Object.keys(members).forEach(function(member){
+                              console.log("message to",member,members[member]);
                               members[member].message({js:{"message":message}});
                             })
                         });

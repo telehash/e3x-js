@@ -333,7 +333,7 @@ function whois(hashname)
   if(!hashname) { warn("whois called without a hashname", hashname); return false; }
   if(typeof hashname != "string") { warn("wrong type, should be string", typeof hashname,hashname); return false; }
   hashname = hashname.split(",")[0]; // convenience if an address is passed in
-  if(!isHEX(hashname, 64)) { warn("seen called without a valid hashname", hashname); return false; }
+  if(!isHEX(hashname, 64)) { warn("whois called without a valid hashname", hashname); return false; }
 
   // so we can check === self
   if(hashname === self.hashname) return self;
@@ -356,6 +356,7 @@ function whois(hashname)
     chan.handle = function(packet, cbHandle)
     {
       var ended = packet.js.err||packet.js.end;
+      packet.js = packet.js["_"];
       if(ended)
       {
         chan.ended = true;
@@ -546,7 +547,7 @@ function channel(type, id)
 	// process packets at a raw level, handle all miss/ack tracking and ordering
 	chan.receive = function(packet)
 	{
-    console.log("LINEIN",packet,chan);
+    console.log("LINEIN",chan.type,JSON.stringify(packet.js));
 	  if(!(packet.js.seq >= 0)) return warn("invalid sequence on stream", packet.js.seq, chan.id, packet.from.address);
 
 	  // so, if there's a lot of "gap" or or dups coming in, be kind and send an update immediately
@@ -593,7 +594,6 @@ function channel(type, id)
   // wrapper to call chan.handle in series
   chan.handler = function()
   {
-    console.log("HANDLER",chan);
     if(!chan.handle) return warn("no chan.handle() function setup?");
     if(chan.handling) return;
     chan.handling = true;
@@ -614,6 +614,7 @@ function channel(type, id)
     // make sure to save/set ended
     if(packet.js.end) chan.ended = packet;      
     packet.js.c = chan.id;
+    console.log("SEND",chan.type,JSON.stringify(packet.js));
     hn.send(packet);
   }
 	
