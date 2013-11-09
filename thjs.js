@@ -4,8 +4,10 @@ var warn = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f); return undefined; };
 var debug = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f)};
 
 var defaults = exports.defaults = {};
-defaults.chan_timeout = 10000; // 10 seconds for channels w/ no acks
+defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
 defaults.seek_timeout = 3000; // shorter tolerance for seeks, is far more lossy
+defaults.chan_autoack = 1000; // is how often we auto ack if the app isn't generating responses in a durable channel
+defaults.chan_resend = 2000; // resend the last packet after this long if it wasn't acked in a durable channel
 
 // dependency functions
 var local;
@@ -101,7 +103,6 @@ exports.channelSetups = {
     // friendly wrapper, calls chan.onPacket(err, packet)
     chan.receive = function(packet){
       if(!chan.onPacket) return chan.end("no handler");
-      if(packet.js.end) chan.ended = true;
       chan.onPacket(packet.js.err||packet.js.end, packet);
     }
 	},
@@ -115,7 +116,7 @@ exports.channelSetups = {
     chan.handle = function(packet, callback){
       if(!chan.onMessage) return chan.end("no handler");
       if(packet.js.end) return chan.onMessage(packet.js.err||packet.js.end);
-      chan.onMessage(false, {js:packet.js["_"], body:packet.body, chan:chan}, callback);
+      if(typeof packet.js["_"] == "object") chan.onMessage(false, {js:packet.js["_"], body:packet.body, chan:chan}, callback);
     };
 	},
 	"stream":function(chan){
@@ -260,7 +261,9 @@ function receive(msg, from)
       debug("line sending",from.hashname, packet.js);
       // TODO if line hasn't responded, break it and start over
       self.send(from, local.lineize(from, packet));
-      // TODO if ended, set timer to cleanup
+      // safest way to tell if a channel was ended is catch it here
+      var chan = from.chans[packet.js.c];
+      if(chan && packet.js.end) chan.done(packet.js.err);
     }
     
     // handle first incoming packets
@@ -272,7 +275,8 @@ function receive(msg, from)
       if(chan)
       {
         chan.receive(packet);
-        // TODO if ended, set timer to cleanup
+        // safest place to catch if a channel was ended, since chan.receive can be replaced
+        if(packet.js.end) chan.done(packet.js.err);
         return;
       }
       // start a channel if one doesn't exist
@@ -359,7 +363,6 @@ function whois(hashname)
       packet.js = packet.js["_"];
       if(ended)
       {
-        chan.ended = true;
         callback(ended, packet);
         return cbHandle();
       }
@@ -397,7 +400,9 @@ function whois(hashname)
     self.seek(hn, function(err){
       if(err)
       {
-        // TODO end all channels with this error
+        Object.keys(hn.chans).forEach(function(cid){
+          hn.chans[cid].end(err);
+        });
         return;
       }
       // recurse back into ourselves to try connecting
@@ -541,6 +546,16 @@ function channel(type, id)
     return chan;
   }
 
+  // called after an end was received or sent
+  chan.done = function(err){
+    if(chan.ended) return; // can get called multiple times when an end packet is retransmitted
+    chan.ended = err||true;
+    debug("channel done",chan.id,err);
+    setTimeout(function(){
+      delete hn.chans[id];      
+    }, 10000);
+  };
+
   // used by anyone to end the channel
   chan.end = function(err){chan.ack(err||true)};
 
@@ -603,6 +618,7 @@ function channel(type, id)
       chan.inHandled = packet.js.seq;
       chan.handling = false;
       if(chan.inq[0]) chan.handler();
+      else setTimeout(chan.ack, defaults.chan_autoack); // done processing incoming packets, auto trigger an ack in case none were sent
     })
   }
   
@@ -611,16 +627,27 @@ function channel(type, id)
   {
 	  // force type on the first outgoing packet (not in answer)
     if(packet.js.seq == 0 && packet.js.ack == undefined) packet.js.type = (chan.app?"_":"")+chan.type;
-    // make sure to save/set ended
-    if(packet.js.end) chan.ended = packet;      
     packet.js.c = chan.id;
     console.log("SEND",chan.type,JSON.stringify(packet.js));
     hn.send(packet);
   }
-	
+
+  // resend the last sent packet if it wasn't acked
+  chan.resend = function()
+  {
+    if(chan.ended) return;
+    if(!chan.outq.length) return;
+    var lastpacket = chan.outq[chan.outq.length-1];
+    if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) return chan.end("timeout");
+    debug("channel resending",JSON.stringify(lastpacket.js));
+    chan.send(lastpacket);
+    setTimeout(chan.resend, defaults.chan_resend); // recurse until chan_timeout
+  }
+
 	chan.ack = function(end, arg)
 	{
-    if(chan.ended) return warn("can't send to an ended channel");
+    if(chan.ended && arg) warn("can't send to an ended channel");
+    if(chan.ended) return;
 
 	  // these are just empty "ack" requests, drop if no reason to ack so they're harmless
 	  if(!end && !arg && chan.outConfirmed == chan.inHandled && !chan.inDups) return;
@@ -630,7 +657,7 @@ function channel(type, id)
     var packet = {};
     packet.js = arg.js || {};
     // do any app js escaping and set type if needed
-    if(chan.app) packet.js = {"_":packet.js};
+    if(chan.app && arg.js) packet.js = {"_":packet.js};
     packet.body = arg.body;
     packet.callback = arg.callback;
 
@@ -658,8 +685,10 @@ function channel(type, id)
 	  // reset/update tracking stats
 	  chan.outConfirmed = packet.js.ack;
 	  chan.inDups = 0;
+    packet.sentAt = Date.now();
     chan.outq.push(packet);
     chan.send(packet);
+    setTimeout(chan.resend, defaults.chan_resend); // to auto-resend if it isn't acked
     return chan;
 	}
 
