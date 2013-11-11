@@ -139,6 +139,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                       }
                       function join(user) {
                         $("#userTemplate").tmpl({user: user}).appendTo("#users");
+                        log(user+" joined");
                       }
                       function handshake(err, arg, chan)
                       {
@@ -152,9 +153,10 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                           if(err)
                           {
                             $("#user-" + mnick).remove();
+                            log(mnick+" left");
                             delete members[chan.hashname];
                           }
-                          if(arg.js.message) chat(mnick, arg.js.message);
+                          if(arg && arg.js.message) chat(mnick, arg.js.message);
                           cb();
                         };
                       }
@@ -171,9 +173,8 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                         if(hosthash) {
                           var host = me.whois(hosthash);
                           if(!host) return log("invalid host: "+hosthash);
-                          host.start("chat", {js:{nick:nick, room:room}}, handshake);
                           host.start("members", {js:{room:room}}, function(err, arg){
-                            if(Array.isArray(arg.js.members)) arg.js.members.forEach(function(member){
+                            if(arg && Array.isArray(arg.js.members)) arg.js.members.forEach(function(member){
                               if(members[member]) return;
                               me.whois(member).start("chat", {js:{nick:nick, room:room}}, handshake);
                             });

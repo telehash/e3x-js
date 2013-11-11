@@ -82,7 +82,8 @@ self.start(type, callback)
     - chan.setup and chan.* from above
 
 // internally
-chan.ack() sends a packet reliably using line.send(), escapes .js for app
+chan.push() sends a packet reliably using line.send(), escapes .js for app
+chan.ack() sends an ephemeral ack
 chan.receive() 
   - receives a packet reliably
   - unescapes .js for app
@@ -94,12 +95,7 @@ chan.receive()
 exports.channelSetups = {
 	"packet":function(chan){
     // to send raw packets
-    chan.packet = function(packet)
-    {
-      // catch any end packets just in case, so we know it ended
-      if(packet.js && packet.js.end) return chan.ack(packet);
-      chan.send(packet); // send it raw
-    }
+    chan.packet = chan.send;
     // friendly wrapper, calls chan.onPacket(err, packet)
     chan.receive = function(packet){
       if(!chan.onPacket) return chan.end("no handler");
@@ -110,12 +106,12 @@ exports.channelSetups = {
     // to send new messages
     chan.message = function(arg, cbConfirm){
       arg.callback = cbConfirm;
-      chan.ack(false, arg);
+      chan.push(false, arg);
     };
     // calls chan.onMessage(err, {js:, body:})
     chan.handle = function(packet, callback){
       if(!chan.onMessage) return chan.end("no handler");
-      if(packet.js.end) return chan.onMessage(packet.js.err||packet.js.end);
+      if(packet.js.end) return chan.onMessage(packet.js.err||packet.js.end, null, callback);
       if(typeof packet.js["_"] == "object") chan.onMessage(false, {js:packet.js["_"], body:packet.body, chan:chan}, callback);
     };
 	},
@@ -145,7 +141,7 @@ exports.channelSetups = {
     // handle (optional) outgoing bulk flow
     chan.bulk = function(data, callback)
     {
-      // TODO break arg.bulk into chunks and send out using chan.ack()      
+      // TODO break arg.bulk into chunks and send out using chan.push()      
     }
 	}
 }
@@ -156,7 +152,7 @@ function start(type, callback)
   var self = this;
   if(type.substr(0,1) != "_") type = "_"+type;
   self.listening[type] = function(packet, chan){
-    packet.js = packet.js["_"];
+    packet.js = packet.js["_"]||{};
     callback(packet, chan);
   };
 }
@@ -261,24 +257,27 @@ function receive(msg, from)
       debug("line sending",from.hashname, packet.js);
       // TODO if line hasn't responded, break it and start over
       self.send(from, local.lineize(from, packet));
-      // safest way to tell if a channel was ended is catch it here
-      var chan = from.chans[packet.js.c];
-      if(chan && packet.js.end) chan.done(packet.js.err);
     }
     
-    // handle first incoming packets
+    // handle all incoming line packets
     from.receive = function(packet)
     {
       from.recvAt = Date.now();
       if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
+
+      console.log("LINEIN",JSON.stringify(packet.js));
+
+      // find any existing channel
       var chan = from.chans[packet.js.c];
       if(chan)
       {
+        var ended = packet.js.err||packet.js.end;
         chan.receive(packet);
         // safest place to catch if a channel was ended, since chan.receive can be replaced
-        if(packet.js.end) chan.done(packet.js.err);
+        if(ended) chan.done(ended);
         return;
       }
+
       // start a channel if one doesn't exist
       if(packet.js.seq !== 0) return; // only handle first/start packets
       if(!self.listening[packet.js.type])
@@ -293,8 +292,8 @@ function receive(msg, from)
         }
         return;
       }
+      // make a channel for any that aren't ended already
       var chan;
-      // make a channel for any that need to exist yet beyond this
       if(!packet.js.end)
       {
         chan = from.channel(packet.js.type, packet.js.c);
@@ -355,12 +354,12 @@ function whois(hashname)
   {
     if(type.substr(0,1) != "_") type = "_"+type;
     var chan = hn.channel(type);
-    chan.ack(false, arg);
+    chan.push(false, arg);
     // feed the first answer back to the app
     chan.handle = function(packet, cbHandle)
     {
       var ended = packet.js.err||packet.js.end;
-      packet.js = packet.js["_"];
+      packet.js = packet.js["_"]||{};
       if(ended)
       {
         callback(ended, packet);
@@ -422,7 +421,7 @@ function whois(hashname)
   hn.seek = function(hashname, callback)
   {
     var chan = this.channel("seek");
-    chan.ack(false, {js:{"seek":hashname}});
+    chan.push(false, {js:{"seek":hashname}});
     chan.receive = function(packet){
       callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
     }
@@ -435,7 +434,7 @@ function whois(hashname)
     var js = {"peer":hashname};
     // if on the same NAT'd IP, also relay our local IPP
     if(self.nat && self.ip && ip == self.pubip) js.local = {ip:self.ip, port:self.port};
-    chan.ack(true, {js:js});
+    chan.push(true, {js:js});
   }
   
   // just send an open packet, direct overrides the ipp of to
@@ -526,7 +525,7 @@ function channel(type, id)
 {
   var hn = this;
 	if(!id) id = local.randomHEX(16);
-  var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:0, inDups:0, lastAck:-1, type:type, id:id};
+  var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:-1, inDups:0, lastAck:-1, type:type, id:id};
 	hn.chans[id] = chan;
   // set flag for app types
   if(type.substr(0,1) == "_")
@@ -546,7 +545,7 @@ function channel(type, id)
     return chan;
   }
 
-  // called after an end was received or sent
+  // called after an end was received or sent, pass an err if the switch force-ended it
   chan.done = function(err){
     if(chan.ended) return; // can get called multiple times when an end packet is retransmitted
     chan.ended = err||true;
@@ -557,25 +556,15 @@ function channel(type, id)
   };
 
   // used by anyone to end the channel
-  chan.end = function(err){chan.ack(err||true)};
+  chan.end = function(err){chan.push(err||true)};
 
 	// process packets at a raw level, handle all miss/ack tracking and ordering
 	chan.receive = function(packet)
 	{
-    console.log("LINEIN",chan.type,JSON.stringify(packet.js));
-	  if(!(packet.js.seq >= 0)) return warn("invalid sequence on stream", packet.js.seq, chan.id, packet.from.address);
-
-	  // so, if there's a lot of "gap" or or dups coming in, be kind and send an update immediately
-	  if(packet.js.seq - chan.outConfirmed > 30 || chan.inDups) chan.ack();
-
-	  // track and drop duplicate packets
-	  if(packet.js.seq <= chan.inDone || chan.inq[packet.js.seq - (chan.inDone+1)]) return chan.inDups++;
-
 	  // process any valid newer incoming ack/miss
 	  var ack = parseInt(packet.js.ack);
 	  var miss = Array.isArray(packet.js.miss) ? packet.js.miss : [];
 	  if(miss.length > 100) return warn("too many misses", miss.length, chan.id, packet.from.address);
-	//console.log(">>>ACK", ack, chan.lastAck, chan.outSeq, "len", chan.outq.length, chan.outq.map(function(p){return p.js.seq}).join(","));
 	  if(ack > chan.lastAck && ack <= chan.outSeq)
 	  {
 	    chan.lastAck = ack;
@@ -593,9 +582,21 @@ function channel(type, id)
 	      // resend misses but not too frequently
 	      if(Date.now() - pold.resentAt < 5*1000) return;
 	      pold.resentAt = Date.now();
-	      hn.send(pold);
+	      hn.ack(pold);
 	    });
 	  }
+    
+    // don't process more packets if ended
+    if(chan.ended) return;
+    
+    // ignore any packets w/o a valid seq, no batteries included!
+    if(!(packet.js.seq >= 0)) return;
+
+	  // so, if there's a lot of "gap" or or dups coming in, be kind and send an update immediately
+	  if(packet.js.seq - chan.outConfirmed > 30 || chan.inDups) chan.ack();
+
+	  // track and drop duplicate packets
+	  if(packet.js.seq <= chan.inDone || chan.inq[packet.js.seq - (chan.inDone+1)]) return chan.inDups++;
   
 	  // drop out of bounds
 	  if(packet.js.seq - chan.inDone > 100) return warn("chan too far behind, dropping", chan.id, packet.from.address);
@@ -603,6 +604,7 @@ function channel(type, id)
 	  // stash this seq and process any in sequence
 	  packet.chan = chan;
 	  chan.inq[packet.js.seq - (chan.inDone+1)] = packet;
+    console.log("INQ",chan.inq.length,chan.inDone,chan.handling);
     if(chan.inq[0]) chan.handler();
 	}
   
@@ -614,22 +616,27 @@ function channel(type, id)
     chan.handling = true;
     var packet = chan.inq.shift();
     chan.inDone++;
+    var seq = packet.js.seq;
     chan.handle(packet, function(){
-      chan.inHandled = packet.js.seq;
+      chan.inHandled = seq;
       chan.handling = false;
-      if(chan.inq[0]) chan.handler();
-      else setTimeout(chan.ack, defaults.chan_autoack); // done processing incoming packets, auto trigger an ack in case none were sent
-    })
+      if(chan.inq[0]) return chan.handler();
+      // done processing incoming packets, auto trigger an ack in case none were sent
+      if(chan.acker) clearTimeout(chan.acker);
+      chan.acker = setTimeout(chan.ack, defaults.chan_autoack);
+    });
   }
   
   // minimal wrapper to send raw packets
   chan.send = function(packet)
   {
 	  // force type on the first outgoing packet (not in answer)
-    if(packet.js.seq == 0 && packet.js.ack == undefined) packet.js.type = (chan.app?"_":"")+chan.type;
+    if(packet.js.seq === 0 && packet.js.ack == undefined) packet.js.type = (chan.app?"_":"")+chan.type;
     packet.js.c = chan.id;
     console.log("SEND",chan.type,JSON.stringify(packet.js));
     hn.send(packet);
+    // catch any ended channels for cleanup
+    if(packet.js.end) chan.done(packet.js.err||packet.js.end);
   }
 
   // resend the last sent packet if it wasn't acked
@@ -638,19 +645,51 @@ function channel(type, id)
     if(chan.ended) return;
     if(!chan.outq.length) return;
     var lastpacket = chan.outq[chan.outq.length-1];
-    if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) return chan.end("timeout");
+    // timeout force-end the channel both directions
+    if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) {
+      chan.handle({js:{end:true,err:"timeout"}},function(){}); // feels pretty brute force
+      return chan.end("timeout");
+    }
     debug("channel resending",JSON.stringify(lastpacket.js));
-    chan.send(lastpacket);
+    chan.ack(lastpacket);
     setTimeout(chan.resend, defaults.chan_resend); // recurse until chan_timeout
   }
 
-	chan.ack = function(end, arg)
+  // add/create ack/miss values and send
+	chan.ack = function(packet)
 	{
-    if(chan.ended && arg) warn("can't send to an ended channel");
-    if(chan.ended) return;
+    if(!packet) console.log("ACK CHECK",chan.id,chan.outConfirmed,chan.inHandled);
 
-	  // these are just empty "ack" requests, drop if no reason to ack so they're harmless
-	  if(!end && !arg && chan.outConfirmed == chan.inHandled && !chan.inDups) return;
+	  // these are just empty "ack" requests
+	  if(!packet)
+    {
+      // drop if no reason to ack so calling .ack() harmless when already ack'd and no dups since we last ack'd
+      if(chan.outConfirmed == chan.inHandled && !chan.inDups) return;
+      if(chan.ended) return;
+      packet = {js:{}};
+    }
+    
+    // confirm only what's been processed
+	  if(chan.inHandled >= 0) chan.outConfirmed = packet.js.ack = chan.inHandled;
+	  chan.inDups = 0;
+    
+	  // calculate misses, if any
+    delete packet.js.miss; // when resending packets, make sure no old info slips through
+	  if(chan.inq.length > 0)
+	  {
+	    packet.js.miss = [];
+	    for(var i = 0; i < chan.inq.length; i++)
+	    {
+	      if(!chan.inq[i]) packet.js.miss.push(chan.inDone + 1 + i);
+	    }
+	  }
+    chan.send(packet);
+  }
+
+  // send content reliably
+	chan.push = function(end, arg)
+	{
+    if(chan.ended) return warn("can't send to an ended channel");
 
     // create the packet
     if(!arg) arg = {};
@@ -670,25 +709,17 @@ function channel(type, id)
 
     // do durable stuff
 	  packet.js.seq = chan.outSeq++;
-	  if(chan.inHandled >= 0) packet.js.ack = chan.inHandled; // confirm only what's been processed
-
-	  // calculate misses, if any
-	  if(chan.inq.length > 0)
-	  {
-	    packet.js.miss = [];
-	    for(var i = 0; i < chan.inq.length; i++)
-	    {
-	      if(!chan.inq[i]) packet.js.miss.push(chan.inDone + 1 + i);
-	    }
-	  }
 
 	  // reset/update tracking stats
-	  chan.outConfirmed = packet.js.ack;
-	  chan.inDups = 0;
     packet.sentAt = Date.now();
     chan.outq.push(packet);
-    chan.send(packet);
-    setTimeout(chan.resend, defaults.chan_resend); // to auto-resend if it isn't acked
+    
+    // add ack/miss and send
+    chan.ack(packet);
+
+    // to auto-resend if it isn't acked
+    if(chan.resender) clearTimeout(chan.resender);
+    chan.resender = setTimeout(chan.resend, defaults.chan_resend);
     return chan;
 	}
 
@@ -730,7 +761,7 @@ function inPeer(packet, chan, self)
   var js = {ip:packet.from.ip, port:packet.from.port};
   if(packet.js.local && packet.js.local.ip != packet.from.ip) js.local = packet.js.local; // relay any optional local information
   var chan = peer.channel("connect");
-  chan.ack(true, {js:js, body:packet.from.der});
+  chan.push(true, {js:js, body:packet.from.der});
 }
 
 // return array of nearby hashname objects
@@ -769,7 +800,7 @@ function inSeek(packet, chan, self)
 
   // now see if we have anyone to recommend
   var answer = {see:self.nearby(packet.js.seek).map(function(hn){ return hn.address; })};  
-  chan.ack(true, {js:answer});
+  chan.push(true, {js:answer});
 }
 
 // utility functions
