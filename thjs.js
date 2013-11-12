@@ -232,6 +232,9 @@ function receive(msg, from)
 	{
     var open = local.deopenize(self, packet);
     if (!open || !open.verify) return warn("couldn't decode open",open);
+    if (!isHEX(open.js.line, 32)) return warn("invalid line id enclosed",open.js.line);
+    if(open.js.to !== self.hashname) return warn("open for wrong hashname",open.js.to);
+
     var from = self.whois(local.der2hn(open.rsa));
     if (!from) return warn("invalid hashname", local.der2hn(open.rsa), open.rsa);
 
@@ -274,7 +277,7 @@ function receive(msg, from)
       from.recvAt = Date.now();
       if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
 
-      console.log("LINEIN",JSON.stringify(packet.js));
+      debug("LINEIN",JSON.stringify(packet.js));
 
       // find any existing channel
       var chan = from.chans[packet.js.c];
@@ -395,7 +398,7 @@ function whois(hashname)
       Object.keys(hn.vias).forEach(function(via){
         var address = hn.vias[via].split(",");
         var to = {ip:address[1],port:address[2]};
-        self.send(to,local.pencode().bytes()); // NAT hole punching
+        self.send(to,local.pencode()); // NAT hole punching
         self.whois(via).peer(hn.hashname); // send the peer request
       });
       delete hn.vias; // so next time it'll re-seek
@@ -409,7 +412,7 @@ function whois(hashname)
       if(err)
       {
         Object.keys(hn.chans).forEach(function(cid){
-          hn.chans[cid].end(err);
+          hn.chans[cid].fail(err);
         });
         return;
       }
@@ -484,7 +487,7 @@ function seek(hn, callback)
   // main loop, multiples of these running at the same time
   function loop(){
     if(done) return;
-    console.log("SEEK LOOP",queue);
+    debug("SEEK LOOP",queue);
     // if nothing left to do and nobody's doing anything, failed :(
     if(Object.keys(doing).length == 0 && queue.length == 0)
     {
@@ -564,6 +567,13 @@ function channel(type, id)
     }, 10000);
   };
 
+  // used to internally fail a channel, timeout or connection failure
+  chan.fail = function(err){
+    chan.done(err);
+    // feels pretty brute force, TODO find better wait of notifying any app callbacks
+    if(chan.handle) chan.handle({js:{end:true,err:err}},function(){});
+  }
+
   // used by anyone to end the channel
   chan.end = function(err){chan.push(err||true)};
 
@@ -613,7 +623,7 @@ function channel(type, id)
 	  // stash this seq and process any in sequence
 	  packet.chan = chan;
 	  chan.inq[packet.js.seq - (chan.inDone+1)] = packet;
-    console.log("INQ",chan.inq.length,chan.inDone,chan.handling);
+    debug("INQ",chan.inq.length,chan.inDone,chan.handling);
     if(chan.inq[0]) chan.handler();
 	}
   
@@ -642,7 +652,7 @@ function channel(type, id)
 	  // force type on the first outgoing packet (not in answer)
     if(packet.js.seq === 0 && packet.js.ack == undefined) packet.js.type = (chan.app?"_":"")+chan.type;
     packet.js.c = chan.id;
-    console.log("SEND",chan.type,JSON.stringify(packet.js));
+    debug("SEND",chan.type,JSON.stringify(packet.js));
     hn.send(packet);
     // catch any ended channels for cleanup
     if(packet.js.end) chan.done(packet.js.err||packet.js.end);
@@ -654,11 +664,8 @@ function channel(type, id)
     if(chan.ended) return;
     if(!chan.outq.length) return;
     var lastpacket = chan.outq[chan.outq.length-1];
-    // timeout force-end the channel both directions
-    if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) {
-      if(chan.handle) chan.handle({js:{end:true,err:"timeout"}},function(){}); // feels pretty brute force
-      return chan.end("timeout");
-    }
+    // timeout force-end the channel
+    if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) return chan.fail("timeout");
     debug("channel resending",JSON.stringify(lastpacket.js));
     chan.ack(lastpacket);
     setTimeout(chan.resend, defaults.chan_resend); // recurse until chan_timeout
@@ -667,7 +674,7 @@ function channel(type, id)
   // add/create ack/miss values and send
 	chan.ack = function(packet)
 	{
-    if(!packet) console.log("ACK CHECK",chan.id,chan.outConfirmed,chan.inHandled);
+    if(!packet) debug("ACK CHECK",chan.id,chan.outConfirmed,chan.inHandled);
 
 	  // these are just empty "ack" requests
 	  if(!packet)
@@ -805,6 +812,7 @@ function nearby(hashname)
 // return a see to anyone closer
 function inSeek(packet, chan, self)
 {
+  if(!chan) return;
   if(!isHEX(packet.js.seek, 64)) return warn("invalid seek of ", packet.js.seek, "from:", packet.from.address);
 
   // now see if we have anyone to recommend

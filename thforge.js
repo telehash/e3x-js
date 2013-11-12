@@ -15,6 +15,7 @@ exports.forge = function(lib)
 }
 
 // these are all the crypto/binary dependencies needed by thjs
+exports.genkey = genkey;
 exports.pub2key = pub2key;
 exports.pri2key = pri2key;
 exports.der2hn = der2hn;
@@ -29,8 +30,6 @@ exports.lineize = lineize;
 exports.delineize = delineize;
 exports.pencode = pencode;
 exports.pdecode = pdecode;
-exports.ecdh = ecdh;
-exports.genkey = genkey;
 try{thjs.localize(exports)}catch(E){}
 
 function genkey(cbDone,cbStep)
@@ -155,8 +154,8 @@ function openize(id, to)
 	// encrypt the ecc key
 	open.open = forge.util.encode64(to.public.encrypt(to.ecc.public.uncompressed, "RSA-OAEP"));
 //	console.log(open, body.length());
-	var packet = pencode(open, body.bytes());
-	return packet.bytes();
+	var packet = pencode(open, body);
+	return packet;
 }
 
 function deopenize(id, open)
@@ -216,7 +215,7 @@ function lineize(to, packet)
 	wrap.line = to.lineIn;
 	var iv = forge.random.getBytesSync(16);
 	wrap.iv = forge.util.bytesToHex(iv);
-	var buf = forge.util.createBuffer(pencode(packet.js,packet.body).bytes())
+	var buf = pencode(packet.js,packet.body);
 //	console.log("LINE",buf.toHex(),packet.toHex(),wrap.iv,to.encKey.toHex());
 
 	// now encrypt the packet
@@ -225,7 +224,7 @@ function lineize(to, packet)
 	cipher.update(buf);
 	cipher.finish();
 //	console.log("COUT",cipher.output.toHex());
-	return pencode(wrap,cipher.output.bytes()).bytes();
+	return pencode(wrap,cipher.output);
 }
 
 // decrypt the contained packet
@@ -268,7 +267,8 @@ function pencode(js, body)
   // network order
   ret.putInt16(len);
   ret.putBytes(jsbuf.getBytes());
-  if(body) ret.putBytes(body);
+  if(typeof body == "string") body = forge.util.createBuffer(body);
+  if(body) ret.putBytes(body.bytes());
   return ret;
 }
 

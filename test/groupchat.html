@@ -115,8 +115,8 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
           	    socket.on('connected', function(data) {
           	    	console.log("Socket connected",data);
           	    	me = thjs.hashname(id, function(to, msg) {
-                    console.log("sending", to.hashname, msg.length);
-                    socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg)});
+                    console.log("sending", to.hashname, msg.length());
+                    socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg.bytes())});
                   });
           	    	console.log("switch created",me);
           				seeds.forEach(me.addSeed, me);
