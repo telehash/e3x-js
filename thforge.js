@@ -3,11 +3,20 @@
 
 (function(exports){
 
-var rsa = forge.pki.rsa;
-var pki = forge.pki;
-var asn1 = forge.asn1;
+// externally add forge lib dependencies
+var forge, rsa, pki, asn1;
+exports.forge = function(lib)
+{
+  forge = lib;
+  pki = lib.pki;
+  rsa = pki.rsa;
+  asn1 = lib.asn1;
+  return exports;
+}
 
 // these are all the crypto/binary dependencies needed by thjs
+exports.pub2key = pub2key;
+exports.pri2key = pri2key;
 exports.der2hn = der2hn;
 exports.key2der = key2der;
 exports.der2key = der2key;
@@ -21,7 +30,23 @@ exports.delineize = delineize;
 exports.pencode = pencode;
 exports.pdecode = pdecode;
 exports.ecdh = ecdh;
+exports.genkey = genkey;
 try{thjs.localize(exports)}catch(E){}
+
+function genkey(cbDone,cbStep)
+{
+	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
+	var step = function() {
+	  // run for 100 ms
+	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
+      if(cbStep) cbStep();
+	    setTimeout(step, 10);
+	  } else {
+      cbDone(null, {public:pki.publicKeyToPem(state.keys.publicKey), private:pki.privateKeyToPem(state.keys.privateKey)});
+	  }
+	}
+	setTimeout(step);  
+}
 
 // der format key to string hashname
 function der2hn(der)
@@ -31,10 +56,20 @@ function der2hn(der)
 	return md.digest().toHex();	
 }
 
+// pem conversion to local key format
+function pub2key(pem)
+{
+  return pki.publicKeyFromPem(pem);
+}
+function pri2key(pem)
+{
+  return pki.privateKeyFromPem(pem);
+}
+
 // wrapper to get raw der bytes from native key format (or pem) and vice versa
 function key2der(key)
 {
-  if(typeof key == "string") key = pki.publicKeyFromPem(key);
+  if(typeof key == "string") key = pub2key(key);
   return asn1.toDer(pki.publicKeyToAsn1(key)).bytes();
 }
 function der2key(der)

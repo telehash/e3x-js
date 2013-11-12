@@ -14,7 +14,7 @@
     "browser"
   ],
   "main":"thjs.js",
-  "files":["thjs.js","LICENSE","README.md","thforge.js"],
+  "files":["thjs.js","LICENSE","README.md","thforge.js","includes/jsbn.js","includes/jsbn2.js","includes/ec.js","includes/sec.js","includes/prng4.js","includes/rng.js"],
   "repository": {
     "type": "git",
     "url": "https://github.com/telehash/thjs.git"

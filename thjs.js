@@ -1,7 +1,10 @@
 (function(exports){ // browser||node safe wrapper
 
-var warn = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f); return undefined; };
-var debug = function(a,b,c,d,e,f){console.log(a,b,c,d,e,f)};
+var warn = function(){console.log.apply(console,arguments); return undefined; };
+var debug = function(){};
+//var debug = function(){console.log.apply(console,arguments)};
+exports.debug = function(cb){ debug = cb; };
+
 
 var defaults = exports.defaults = {};
 defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
@@ -13,18 +16,24 @@ defaults.chan_resend = 2000; // resend the last packet after this long if it was
 var local;
 exports.localize = function(locals){ local = locals; }
 
+exports.isHashname = function(hex)
+{
+  return isHEX(hex, 64);
+}
+
 // start a hashname listening and ready to go
 exports.hashname = function(key, send, args)
 {
-  if(!local) return warn("thjs.locals() needs to be called first");
+  if(!local) return warn("thjs.localize() needs to be called first");
   if(!key || !key.public || !key.private) return warn("bad args to hashname, requires key.public and key.private");
+  if(!local.pub2key(key.public) || !local.pri2key(key.private)) return warn("key.public and key.private must be valid pem strings");
   if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
   // configure defaults
   if(!args) args = {};
   var self = {seeds:[], lines:{}, all:{}, buckets:[], listening:{}};
-  self.private = key.private;
-  self.public = key.public;
+  self.private = local.pri2key(key.private);
+  self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
   self.hashname = local.der2hn(self.der);
   self.nat = true;
@@ -222,7 +231,7 @@ function receive(msg, from)
   if(packet.js.type == "open")
 	{
     var open = local.deopenize(self, packet);
-    if (!open) return warn("couldn't decode open");
+    if (!open || !open.verify) return warn("couldn't decode open",open);
     var from = self.whois(local.der2hn(open.rsa));
     if (!from) return warn("invalid hashname", local.der2hn(open.rsa), open.rsa);
 
@@ -231,7 +240,7 @@ function receive(msg, from)
 
     // update values
     var line = {};
-    debug("inOpen verified", from.hashname, open);
+    debug("inOpen verified", from.hashname);
     from.openAt = open.js.at;
     from.der = open.rsa;
     from.ip = packet.sender.ip;
@@ -647,7 +656,7 @@ function channel(type, id)
     var lastpacket = chan.outq[chan.outq.length-1];
     // timeout force-end the channel both directions
     if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) {
-      chan.handle({js:{end:true,err:"timeout"}},function(){}); // feels pretty brute force
+      if(chan.handle) chan.handle({js:{end:true,err:"timeout"}},function(){}); // feels pretty brute force
       return chan.end("timeout");
     }
     debug("channel resending",JSON.stringify(lastpacket.js));
