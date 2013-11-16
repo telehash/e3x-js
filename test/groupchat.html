@@ -143,14 +143,13 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                         $("#userTemplate").tmpl({user: user}).appendTo("#users");
                         log(user+" joined");
                       }
-                      function handshake(err, arg, chan)
+                      function handshake(err, arg, chan, cb)
                       {
                         if(err) return console.log("handshake err",err);
                         var mnick = (arg.js.nick) ? arg.js.nick : chan.hashname.substr(0,6);
                         if(!members[chan.hashname]) join(mnick);
                         members[chan.hashname] = chan;
-                        chan.setup("message");
-                        chan.onMessage = function(err, arg, cb){
+                        chan.callback = function(err, arg, chan, cb2){
                           console.log("chatmsg",err,arg);
                           if(err)
                           {
@@ -159,8 +158,9 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                             delete members[chan.hashname];
                           }
                           if(arg && arg.js.message) chat(mnick, arg.js.message);
-                          cb();
+                          cb2();
                         };
+                        cb();
                       }
                         $("#join-form").hide();
                         $("#chat").show();
@@ -175,27 +175,28 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                         if(hosthash) {
                           var host = me.whois(hosthash);
                           if(!host) return log("invalid host: "+hosthash);
-                          host.start("members", {js:{room:room}}, function(err, arg){
+                          host.start("members", {js:{room:room}}, function(err, arg, chan, cb){
                             if(arg && Array.isArray(arg.js.members)) arg.js.members.forEach(function(member){
                               if(members[member]) return;
                               me.whois(member).start("chat", {js:{nick:nick, room:room}}, handshake);
                             });
+                            cb();
                           });
                           log("joining "+room+" via "+hosthash);
                         } else {
                           log("hosting room, others can use '"+room+"@"+me.hashname+"' to join");
                         }
                         // any incoming chat message
-                        me.start("chat", function(arg, chan){
+                        me.listen("chat", function(err, arg, chan, cb){
                           console.log("chat",arg);
                           if(room != arg.js.room) return chan.end("unknown room");
-                          handshake(false, arg, chan);
-                          chan.message({js:{nick:nick}});
+                          handshake(false, arg, chan, cb);
+                          chan.send({js:{nick:nick}});
                         });
                         // respond to incoming membership listing request
-                        me.start("members", function(arg, chan){
+                        me.listen("members", function(err, arg, chan, cb){
                           console.log("members",arg);
-                          chan.setup("message");
+                          cb();
                           // send members in chunks
                           var mlist = Object.keys(members);
                           mlist.push(me.hashname);
@@ -203,7 +204,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                           {
                             var chunk = mlist.slice(0, 10);
                             mlist = mlist.slice(10);
-                            chan.message({js:{members:chunk}});
+                            chan.send({js:{members:chunk}});
                             if(mlist.length == 0) chan.end();
                           }
                         });
@@ -215,7 +216,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                             chat(nick, message);
                             Object.keys(members).forEach(function(member){
                               console.log("message to",member,members[member]);
-                              members[member].message({js:{"message":message}});
+                              members[member].send({js:{"message":message}});
                             })
                         });
                     });

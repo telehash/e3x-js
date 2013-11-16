@@ -33,7 +33,7 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], lines:{}, all:{}, buckets:[], rels:{}, unrels:{}};
+  var self = {seeds:[], lines:{}, all:{}, buckets:[], rels:{}, raws:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
@@ -58,13 +58,19 @@ exports.hashname = function(key, send, args)
   self.online = online;
 
   // handle new reliable channels coming in from anyone
-  self.reliable = startRel;
-  self.unreliable = startUnrel;
+  self.listen = function(type, callback){
+    if(type.substr(0,1) !== "_") type = "_"+type;
+    self.rels[type] = callback;
+  };
+  // advanced usage only
+  self.raw = function(type, callback){
+    self.raws[type] = callback;
+  };
   
 	// internal listening unreliable channels
-	self.unrels["peer"] = inPeer;
-	self.unrels["connect"] = inConnect;
-	self.unrels["seek"] = inSeek;
+	self.raws["peer"] = inPeer;
+	self.raws["connect"] = inConnect;
+	self.raws["seek"] = inSeek;
 
   // primarily internal, to seek/connect to a hashname
   self.seek = seek;
@@ -76,8 +82,8 @@ exports.hashname = function(key, send, args)
 }
 
 /* CHANNELS API
-hn.reliable(type, arg, callback)
-  - used by app to create a channel of given type
+hn.channel(type, arg, callback)
+  - used by app to create a reliable channel of given type
   - arg contains .js and .body for the first packet
   - callback(err, arg, chan, cbDone)
     - called when any packet is received (or error/fail)
@@ -87,19 +93,19 @@ hn.reliable(type, arg, callback)
     - chan.wrap(bulk|stream) to modify interface, replaces this callback handler
       - chan.bulk(str, cbDone) / onBulk(cbDone(err, str))
       - chan.read/write
-hn.unreliable(type, arg, callback)
-  - arg contains .js and .body to create channel 
+hn.raw(type, arg, callback)
+  - arg contains .js and .body to create an unreliable channel 
   - callback(err, arg, chan)
     - called on any packet or error
     - given the response .js .body in arg
     - chan.send() to send packets
 
-self.reliable(type, callback)
+self.channel(type, callback)
   - used to listen for incoming reliable channel starts
   - callback(err, arg, chan, cbDone)
     - called for any answer or subsequent packets
     - chan.wrap() to modify
-self.unreliable(type, callback)
+self.raw(type, callback)
   - used to listen for incoming unreliable channel starts
   - callback(err, arg, chan)
     - called for any incoming packets
@@ -136,17 +142,6 @@ exports.channelWraps = {
       // TODO break arg.bulk into chunks and send out using chan.push()      
     }
 	}
-}
-
-// this is self.start, for the app "listening" for any incoming channel type
-function start(type, callback)
-{
-  var self = this;
-  if(type.substr(0,1) != "_") type = "_"+type;
-  self.listening[type] = function(packet, chan){
-    packet.js = packet.js["_"]||{};
-    callback(packet, chan);
-  };
 }
 
 function addSeed(arg) {
@@ -257,7 +252,7 @@ function receive(msg, from)
     // handle all incoming line packets
     from.receive = function(packet)
     {
-//      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
+      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
       from.recvAt = Date.now();
       if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
 
@@ -265,33 +260,27 @@ function receive(msg, from)
 
       // find any existing channel
       var chan = from.chans[packet.js.c];
-      if(chan)
-      {
-        var ended = packet.js.err||packet.js.end;
-        chan.receive(packet);
-        // safest place to catch if a channel was ended, since chan.receive can be replaced
-        if(ended) chan.done(ended);
-        return;
-      }
+      if(chan) return chan.receive(packet);
 
-      // start a channel if one doesn't exist
-      if(!self.listening[packet.js.type])
+      // start a channel if one doesn't exist, check either reliable or unreliable types
+      var listening = {};
+      if(typeof packet.js.seq == "undefined") listening = self.raws;
+      if(packet.js.seq === 0) listening = self.rels;
+      if(!listening[packet.js.type])
       {
         // bounce error
-        if(!packet.js.end)
+        if(!packet.js.end && !packet.js.err)
         {
-          packet.js.end = true;
-          packet.js.err = "unknown type";
           warn("bouncing unknown channel/type",packet.js);
-          from.send(packet);            
+          var err = (packet.js.type) ? "unknown type" : "unknown channel"
+          from.send({js:{err:err,c:packet.js.c}});
         }
         return;
       }
-      // make a channel for any answering
-      var chan = from.channel(packet.js.type, packet.js.c);
-      chan.inDone = packet.js.seq; // if durability is requested, this ack's it
-      debug("channel listening",from.hashname, packet.js.type, packet.js);
-      self.listening[packet.js.type](packet, chan, self);
+      // make the correct kind of channel;
+      var kind = (listening == self.raws) ? "raw" : "start";
+      var chan = from[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
+      chan.receive(packet);
     }
 
     // if anyone was waiting for a trigger
@@ -334,33 +323,13 @@ function whois(hashname)
 
   var hn = self.all[hashname];
 	if(hn) return hn;
-  hn = self.all[hashname] = {hashname:hashname, chans:{}};
+  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self};
   hn.at = Date.now();
 
-  // internal, to create a new channel
-  hn.channel = channel;
+  // to create a new channels to this hashname
+  hn.start = channel;
+  hn.raw = raw;
 
-	// app convenience wrapper to start a new channel to this hashname
-  hn.start = function(type, arg, callback)
-  {
-    if(type.substr(0,1) != "_") type = "_"+type;
-    var chan = hn.channel(type);
-    chan.push(false, arg);
-    // feed the first answer back to the app
-    chan.unreliable = function(packet)
-    {
-      var ended = packet.js.err||packet.js.end;
-      packet.js = packet.js["_"]||{};
-      if(ended)
-      {
-        callback(ended, packet);
-        return;
-      }
-      // the app should call chan.setup() that reconfigures handling
-      callback(false, packet, chan);
-    }
-  }
-  
   // internal, trying to send on a line needs to create it first
   // this function gets replaced as soon as there's a line created
   hn.send = function(packet){
@@ -392,7 +361,7 @@ function whois(hashname)
       if(err)
       {
         Object.keys(hn.chans).forEach(function(cid){
-          hn.chans[cid].fail(err);
+          hn.chans[cid].fail({js:{err:err}});
         });
         return;
       }
@@ -412,11 +381,19 @@ function whois(hashname)
   // just make a seek request conveniently
   hn.seek = function(hashname, callback)
   {
-    var chan = this.channel("seek");
-    chan.push(false, {js:{"seek":hashname}});
-    chan.receive = function(packet){
-      callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
+    var tries = 0;
+    function seek()
+    {
+      tries++;
+      if(tries > 3) return callback("timed out", []);
+      var timer = setTimeout(seek, 1000);
+      hn.raw("seek", {js:{"seek":hashname}}, function(err, packet, chan){
+        if(tries > 3) return; // already failed back
+        clearTimeout(timer);
+        callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
+      });
     }
+    seek();
   }
 
   // send a simple lossy peer request, don't care about answer
@@ -513,19 +490,13 @@ function seek(hn, callback)
 }
 
 // create an unreliable channel
-function unreliable(type, arg, callback)
+function raw(type, arg, callback)
 {
   var hn = this;
   var chan = {type:type, callback:callback};
   chan.id = arg.id || local.randomHEX(16);
 	hn.chans[chan.id] = chan;
 
-  // set flag for app types
-  if(type.substr(0,1) == "_")
-  {
-    chan.app = true;
-    chan.type = type.substr(1); // for the app
-  }
   chan.hashname = hn.hashname; // for convenience
 
   debug("new unreliable channel",hn.hashname,chan.type);
@@ -558,21 +529,17 @@ function unreliable(type, arg, callback)
   return chan;		
 }
 
-// create a reliable channel
-function reliable(type, arg, callback)
+// create a reliable channel with a friendlier interface
+function channel(type, arg, callback)
 {
   var hn = this;
-  var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:-1, lastAck:-1, type:type, callback:callback};
+  if(type.substr(0,1) !== "_") type = "_"+type;
+  var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:-1, lastAck:-1, callback:callback};
   chan.id = arg.id || local.randomHEX(16);
 	hn.chans[chan.id] = chan;
   chan.timeout = arg.timeout || defaults.chan_timeout;
-
-  // set flag for app types
-  if(type.substr(0,1) == "_")
-  {
-    chan.app = true;
-    chan.type = type.substr(1); // for the app
-  }
+  // for now all reliable channels are app ones
+  chan.type = (type.substr(0,1) == "_") ? type : "_"+type;
   chan.hashname = hn.hashname; // for convenience
 
   debug("new channel",hn.hashname,chan.type);
@@ -590,7 +557,7 @@ function reliable(type, arg, callback)
   chan.done = function(){
     if(chan.ended) return; // prevent multiple calls
     chan.ended = true;
-    debug("channel done",chan.id,err);
+    debug("channel done",chan.id);
     setTimeout(function(){
       // fire .callback(err) on any outq yet?
       delete hn.chans[chan.id];
@@ -601,16 +568,21 @@ function reliable(type, arg, callback)
   chan.fail = function(packet){
     if(chan.errored) return; // prevent multiple calls
     chan.errored = packet;
-    callback(packet.js.err, packet, chan, function(){});
+    chan.callback(packet.js.err, packet, chan, function(){});
     chan.done();
   }
 
-  // simple wrapper to end the channel and to error it
+  // simple convenience wrapper to end the channel
   chan.end = function(){
-    chan.send({js:{end:true}});
+    chan.send({end:true});
   };
+
+  // errors are hard-send-end
   chan.err = function(err){
-    chan.send({js:{err:err}});
+    if(chan.errored) return;
+    chan.errored = {js:{err:err,c:chan.id}};
+    hn.send(chan.errored);
+    chan.done();
   };
 
 	// process packets at a raw level, handle all miss/ack tracking and ordering
@@ -632,12 +604,12 @@ function reliable(type, arg, callback)
 	  }
 	  if(miss.length > 0 || ack > chan.lastAck)
 	  {
+      debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
 	    chan.lastAck = ack;
 	    // rebuild outq, only keeping newer packets, resending any misses
 	    var outq = chan.outq;
 	    chan.outq = [];
 	    outq.forEach(function(pold){
-        if(typeof packet.js.seq != "number") return;
 	      // packet acknowleged!
 	      if(pold.js.seq <= ack) {
 	        if(pold.callback) pold.callback();
@@ -684,7 +656,9 @@ function reliable(type, arg, callback)
     if(!packet && chan.inq.length > 0) chan.forceAck = true;
     if(!packet) return;
     chan.handling = true;
-    chan.callback(packet.js.err||packet.js.end, packet, chan, function(){
+    var err = packet.js.err||packet.js.end;
+    packet.js = packet.js._ || {}; // unescape all content json
+    chan.callback(err, packet, chan, function(){
       chan.inq.shift();
       chan.inDone++;
       chan.handling = false;
@@ -699,7 +673,7 @@ function reliable(type, arg, callback)
     if(!chan.outq.length) return;
     var lastpacket = chan.outq[chan.outq.length-1];
     // timeout force-end the channel
-    if(Date.now() - lastpacket.sentAt > defaults.chan_timeout) return chan.fail("timeout");
+    if(Date.now() - lastpacket.sentAt > chan.timeout) return chan.fail({js:{err:"timeout"}});
     debug("channel resending");
     chan.ack(lastpacket);
     setTimeout(chan.resend, defaults.chan_resend); // recurse until chan_timeout
@@ -738,14 +712,8 @@ function reliable(type, arg, callback)
     debug("SEND",chan.type,JSON.stringify(packet.js));
     hn.send(packet);
 
-    // catch whenever it was ended/errored
+    // catch whenever it was ended to start cleanup
     if(packet.js.end) chan.done();
-    if(packet.js.err)
-    {
-      // save the error to re-send if needed
-      chan.errored = packet;
-      chan.done();
-    }
   }
 
   // send content reliably
@@ -753,13 +721,12 @@ function reliable(type, arg, callback)
 	{
     if(chan.ended) return warn("can't send to an ended channel");
 
-    // create a new packet
+    // create a new packet from the arg
     if(!arg) arg = {};
     var packet = {};
-    packet.js = arg.js || {};
-
-    // do any app js escaping and incoming args
-    if(chan.app && arg.js) packet.js = {"_":packet.js};
+    packet.js = {_:arg.js};
+    if(arg.type) packet.js.type = arg.type;
+    if(arg.end) packet.js.end = arg.end;
     packet.body = arg.body;
     packet.callback = arg.callback;
 
@@ -782,7 +749,7 @@ function reliable(type, arg, callback)
   // send optional initial packet with type set
   if(arg.js)
   {
-    arg.js.type = type;
+    arg.type = type;
     chan.send(arg);
   }
 
@@ -790,10 +757,10 @@ function reliable(type, arg, callback)
 }
 
 // someone's trying to connect to us, send an open to them
-function inConnect(packet, chan, self)
+function inConnect(err, packet, chan)
 {
   var der = local.der2der(packet.body);
-  var to = self.whois(local.der2hn(der));
+  var to = packet.from.self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
   // if no ipp yet, save them
   if(!to.ip) {
@@ -815,11 +782,11 @@ function inConnect(packet, chan, self)
 }
 
 // be the middleman to help NAT hole punch
-function inPeer(packet, chan, self)
+function inPeer(err, packet, chan)
 {
   if(!isHEX(packet.js.peer, 64)) return warn("invalid peer of", packet.js.peer, "from", packet.from.address);
 
-  var peer = self.whois(packet.js.peer);
+  var peer = packet.from.self.whois(packet.js.peer);
   if(!peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
   // send a single lossy packet
   var js = {type:"connect", end:true, ip:packet.from.ip, port:packet.from.port, c:local.randomHEX(16)};
@@ -857,14 +824,14 @@ function nearby(hashname)
 }
 
 // return a see to anyone closer
-function inSeek(packet, chan, self)
+function inSeek(err, packet, chan)
 {
-  if(!chan) return;
+  if(err) return;
   if(!isHEX(packet.js.seek, 64)) return warn("invalid seek of ", packet.js.seek, "from:", packet.from.address);
 
   // now see if we have anyone to recommend
-  var answer = {end:true, see:self.nearby(packet.js.seek).map(function(hn){ return hn.address; })};
-  chan.ack({js:answer});
+  var answer = {end:true, see:packet.from.self.nearby(packet.js.seek).map(function(hn){ return hn.address; })};
+  chan.send({js:answer});
 }
 
 // utility functions
