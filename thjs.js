@@ -252,7 +252,7 @@ function receive(msg, from)
     // handle all incoming line packets
     from.receive = function(packet)
     {
-      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
+//      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
       from.recvAt = Date.now();
       if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
 
@@ -768,7 +768,7 @@ function inConnect(err, packet, chan)
     to.port = parseInt(packet.js.port);
   }
   // if possible NAT-local given, cache that for the open flow too
-  if(self.nat && packet.js.local && typeof packet.js.local.ip == "string" && typeof packet.js.local.port == "number" && packet.js.local.ip != to.ip) to.local = packet.js.local;
+  if(packet.from.self.nat && packet.js.local && typeof packet.js.local.ip == "string" && typeof packet.js.local.port == "number" && packet.js.local.ip != to.ip) to.local = packet.js.local;
   if(to.sentOpen)
   {
     // don't resend to fast to prevent abuse/amplification
