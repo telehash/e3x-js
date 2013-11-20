@@ -23,7 +23,8 @@
 		"socket.io": "*"
 	},
   "scripts": {
-    "start":"cd nodesocket && node socketd.js"
+    "start":"cd nodesocket && node socketd.js",
+    "chrome":"mkdir -p chrome/includes && cp includes/* chrome/includes/ && cp *.js chrome/"
   },
   "licenses": [
   {
