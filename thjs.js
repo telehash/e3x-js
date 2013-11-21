@@ -457,7 +457,7 @@ function whois(hashname)
     {
       Object.keys(hn.vias).forEach(function(via){
         var address = hn.vias[via].split(",");
-        var to = {ip:address[1],port:address[2]};
+        var to = {ip:address[1],port:parseInt(address[2])};
         self.send(to,local.pencode()); // NAT hole punching
         self.whois(via).peer(hn.hashname); // send the peer request
       });

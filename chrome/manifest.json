@@ -10,9 +10,11 @@
     }
   },
   "permissions": [
+    "storage",
     "experimental",
     {"socket": [
-      "udp-bind::*"
+      "udp-bind::*",
+      "udp-send-to::*"
     ]}
   ]
 }
