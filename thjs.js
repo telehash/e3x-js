@@ -74,6 +74,7 @@ exports.hashname = function(key, send, args)
 	self.raws["peer"] = inPeer;
 	self.raws["connect"] = inConnect;
 	self.raws["seek"] = inSeek;
+	self.raws["relay"] = inRelay;
 
   // primarily internal, to seek/connect to a hashname
   self.seek = seek;
@@ -242,12 +243,12 @@ function meshPing(self)
 
 function addSeed(arg) {
   var self = this;
-  if(!arg.ip || !arg.port || !arg.pubkey) return warn("invalid args to addSeed");
+  if(!arg.pubkey) return warn("invalid args to addSeed");
   var der = local.key2der(arg.pubkey);
   var seed = self.whois(local.der2hn(der));
   seed.der = der;
-  seed.ip = arg.ip;
-  seed.port = parseInt(arg.port);
+  if(arg.net) seed.netIn(arg.net);
+  if(arg.ip) seed.netIn({ip:arg.ip,port:parseInt(arg.port)});
   seed.isSeed = true;
   self.seeds.push(seed);
 }
@@ -268,8 +269,7 @@ function myVia(from, address)
     // TODO multiple public IPs?
   }
   // detect when not NAT'd
-  if(self.ip == self.pubip && self.port == self.pubport) self.nat = false;
-  
+  self.nat = (self.ip == self.pubip && self.port == self.pubport) ? false : true;  
 }
 
 function online(callback)
@@ -303,18 +303,24 @@ function online(callback)
 }
 
 // self.receive, raw incoming udp data
-function receive(msg, from)
+function receive(msg, net)
 {
 	var self = this;
+  // normalize what network info this packet came from
+  if(!net.type) 
+  {
+    net.type = "ip4";
+    net.id = net.ip+":"+net.port;
+  }
   var packet = local.pdecode(msg);
-  if(!packet) return warn("failed to decode a packet from", from.ip, from.port, msg.toString());
+  if(!packet) return warn("failed to decode a packet from", net.id, msg.toString());
   if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
   if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", packet.sender);
 
-  packet.sender = {ip:from.ip, port:from.port};
+  packet.sender = net;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",packet.sender.ip+":"+packet.sender.port, packet.js.type, packet.body && packet.body.length);
+  debug("in",net.id, packet.js.type, packet.body && packet.body.length);
 
   // either it's an open
   if(packet.js.type == "open")
@@ -328,16 +334,15 @@ function receive(msg, from)
     if (!from) return warn("invalid hashname", local.der2hn(open.rsa), open.rsa);
 
     // make sure this open is newer (if any others)
-    if (typeof open.js.at != "number" || (from.openAt && open.js.at < from.openAt)) return warn("invalid at", open.js.at);
+    if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
+    if (from.openAt && open.js.at <= from.openAt) return; // skip dups
 
     // update values
     var line = {};
     debug("inOpen verified", from.hashname);
     from.openAt = open.js.at;
     from.der = open.rsa;
-    from.ip = packet.sender.ip;
-    from.port = packet.sender.port;
-    from.address = [from.hashname, from.ip, from.port].join(",");
+    from.netIn(net, true); // forces new default
     from.recvAt = Date.now();
 
     // was an existing line already, being replaced
@@ -356,10 +361,11 @@ function receive(msg, from)
     
     // replace function to send things via the line
     from.send = function(packet) {
-      debug("line sending",from.hashname, packet.js);
+      var to = packet.to||from.net;
+      debug("line sending",from.hashname, to.id, packet.js);
       from.sentAt = Date.now();
       // TODO if line hasn't responded, break it and start over
-      self.send(from, local.lineize(from, packet));
+      self.send(to, local.lineize(from, packet));
     }
     
     // handle all incoming line packets
@@ -436,12 +442,30 @@ function whois(hashname)
 
   var hn = self.all[hashname];
 	if(hn) return hn;
-  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self};
+  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, nets:{}};
   hn.at = Date.now();
 
   // to create a new channels to this hashname
   hn.start = channel;
   hn.raw = raw;
+
+  // manage network information consistently
+  hn.netIn = function(net, isOpen)
+  {
+    if(!hn.net || isOpen) hn.net = net; // set default outgoing
+    // always normalize to ip4 address bases
+    if(!net.id)
+    {
+      net.type = "ip4";
+      net.id = net.ip+":"+net.port;
+    }
+    if(hn.nets[net.id]) return; // already seen
+    hn.nets[net.id] = net;
+    // always use the newest ip4 address for see responses
+    if(net.type == "ip4") hn.address = [hn.hashname, net.ip, net.port].join(",");
+    // if we're defaulting to a relay and have better default, always upgrade that
+    if(hn.net.type == "relay" && net.type != "relay") hn.net = net;
+  }
 
   // internal, trying to send on a line needs to create it first
   // this function gets replaced as soon as there's a line created
@@ -449,15 +473,15 @@ function whois(hashname)
     // try to re-send the packet as soon as there's a line
     hn.onLine = function(){ hn.send(packet) }
 
-    // if any pub key and ip/port, try that
-    if(hn.der && hn.ip && hn.port) return hn.open();
+    // if any pub key and network, try that
+    if(hn.der && hn.net) return hn.open();
 
     // if any via information, try them all! (usually only one)
     if(hn.vias)
     {
       Object.keys(hn.vias).forEach(function(via){
         var address = hn.vias[via].split(",");
-        var to = {ip:address[1],port:parseInt(address[2])};
+        var to = {type:"ip4",ip:address[1],port:parseInt(address[2])};
         self.send(to,local.pencode()); // NAT hole punching
         self.whois(via).peer(hn.hashname); // send the peer request
       });
@@ -527,20 +551,18 @@ function whois(hashname)
   hn.peer = function(hashname, ip)
   {
     var js = {type:"peer", end:true, "peer":hashname, c:local.randomHEX(16)};
-    // if on the same NAT'd IP, also relay our local IPP
-    if(self.nat && self.ip && ip == self.pubip) js.local = {ip:self.ip, port:self.port};
+    // if on the same NAT'd IP, ask for a relay
+    if(self.nat && ip == self.pubip) js.relay = true;
     hn.send({js:js});
   }
-  
-  // just send an open packet, direct overrides the ipp of to
+
+  // just send an open packet, direct overrides the network
   hn.open = function(direct)
   {
     hn.sentOpen = true;
     var open = local.openize(self, hn);
     self.lines[hn.lineOut] = hn;
-    self.send(direct||hn, open);
-    // when we have a local alternate address, try that too
-    if(hn.local) self.send(hn.local, open);
+    self.send(direct||hn.net, open);
   }
   
   return hn;
@@ -906,23 +928,29 @@ function inConnect(err, packet, chan)
   var der = local.der2der(packet.body);
   var to = packet.from.self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
-  // if no ipp yet, save them
-  if(!to.ip) {
-    to.ip = packet.js.ip;
-    to.port = parseInt(packet.js.port);
+
+  // save the suggested network
+  var net = {ip:packet.js.ip,port:packet.js.port};
+  to.netIn(net);
+
+  // if relay is requested, do that
+  if(packet.js.relay === true)
+  {
+    // TODO create+add relay network to.netIn()
   }
-  // if possible NAT-local given, cache that for the open flow too
-  if(packet.from.self.nat && packet.js.local && typeof packet.js.local.ip == "string" && typeof packet.js.local.port == "number" && packet.js.local.ip != to.ip) to.local = packet.js.local;
+
+  // don't resend to fast to prevent abuse/amplification
   if(to.sentOpen)
   {
-    // don't resend to fast to prevent abuse/amplification
     if(to.resentOpen && (Date.now() - to.resentOpen) < 5000) return warn("told to connect too fast, ignoring from",packet.from.address,"to",to.address, Date.now() - to.resentOpen);
     to.resentOpen = Date.now();
     to.sentOpen = false;
   }else{
     to.der = der;
   }
-  to.open(packet.js); // use the given ipp override since new connects happen from restarts
+
+  // always send the open to the requested network
+  to.open(net);
 }
 
 // be the middleman to help NAT hole punch
@@ -933,9 +961,39 @@ function inPeer(err, packet, chan)
   var peer = packet.from.self.whois(packet.js.peer);
   if(!peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
   // send a single lossy packet
-  var js = {type:"connect", end:true, ip:packet.from.ip, port:packet.from.port, c:local.randomHEX(16)};
-  if(packet.js.local && packet.js.local.ip != packet.from.ip) js.local = packet.js.local; // relay any optional local information
+  var js = {type:"connect", end:true, ip:packet.sender.ip, port:packet.sender.port, c:local.randomHEX(16)};
+  if(packet.js.relay === true) js.relay = true; // pass through relay flag
   peer.send({js:js, body:packet.from.der});
+}
+
+// proxy packets for two hosts
+function inRelay(err, packet, chan)
+{
+  var self = packet.from.self;
+  if(!chan.to)
+  {
+    if(!isHEX(packet.js.to, 64)) return warn("invalid relay of", packet.js.to, "from", packet.from.address);
+    if(packet.js.to == self.hashname)
+    {
+      // TODO to us!
+      return;
+    }
+    chan.to = self.whois(packet.js.to);
+    if(!chan.to || !chan.to.lineIn) return warn("relay to unknown line", packet.js.to, packet.from.address);
+  }
+
+  // throttle
+  if(!chan.relayed || Date.now() - chan.relayed > 1000)
+  {
+    chan.relayed = Date.now();
+    chan.relays = 0;
+  }
+  if(chan.relays > 5) return debug("relay too fast, dropping",chan.relays);
+  chan.relays++;
+
+  // dumb relay
+  chan.relayed = Date.now();
+  chan.to.send(packet);
 }
 
 // return array of nearby hashname objects
