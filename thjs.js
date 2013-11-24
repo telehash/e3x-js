@@ -459,10 +459,9 @@ function whois(hashname)
       net.type = "ip4";
       net.id = net.ip+":"+net.port;
     }
-    if(hn.nets[net.id]) return; // already seen
-    hn.nets[net.id] = net;
+    hn.nets[net.id] = net; // always replace/update
     // always use the newest ip4 address for see responses
-    if(net.type == "ip4") hn.address = [hn.hashname, net.ip, net.port].join(",");
+    if(net.type == "ip4" && hn.net == net) hn.address = [hn.hashname, net.ip, net.port].join(",");
     // if we're defaulting to a relay and have better default, always upgrade that
     if(hn.net.type == "relay" && net.type != "relay") hn.net = net;
   }
@@ -561,10 +560,16 @@ function whois(hashname)
   {
     hn.sentOpen = true;
     var open = local.openize(self, hn);
+    var to = direct||hn.net;
     self.lines[hn.lineOut] = hn;
-    self.send(direct||hn.net, open);
-  }
-  
+    self.send(to, open);
+    // if a relay is requested, open to that too
+    if(to.relay)
+    {
+      var relay = self.whois(to.relay);
+      relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
+    }
+  }  
   return hn;
 }
 
@@ -925,6 +930,7 @@ function channel(type, arg, callback)
 // someone's trying to connect to us, send an open to them
 function inConnect(err, packet, chan)
 {
+  if(!packet.body) return;
   var der = local.der2der(packet.body);
   var to = packet.from.self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
@@ -933,16 +939,13 @@ function inConnect(err, packet, chan)
   var net = {ip:packet.js.ip,port:packet.js.port};
   to.netIn(net);
 
-  // if relay is requested, do that
-  if(packet.js.relay === true)
-  {
-    // TODO create+add relay network to.netIn()
-  }
+  // if relay is requested, flag that
+  if(packet.js.relay === true) net.relay = packet.from;
 
   // don't resend to fast to prevent abuse/amplification
   if(to.sentOpen)
   {
-    if(to.resentOpen && (Date.now() - to.resentOpen) < 5000) return warn("told to connect too fast, ignoring from",packet.from.address,"to",to.address, Date.now() - to.resentOpen);
+    if(to.resentOpen && (Date.now() - to.resentOpen) < 2000) return warn("told to connect too fast, ignoring from",packet.from.address,"to",to.address, Date.now() - to.resentOpen);
     to.resentOpen = Date.now();
     to.sentOpen = false;
   }else{
@@ -956,7 +959,7 @@ function inConnect(err, packet, chan)
 // be the middleman to help NAT hole punch
 function inPeer(err, packet, chan)
 {
-  if(!isHEX(packet.js.peer, 64)) return warn("invalid peer of", packet.js.peer, "from", packet.from.address);
+  if(!isHEX(packet.js.peer, 64)) return;
 
   var peer = packet.from.self.whois(packet.js.peer);
   if(!peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
@@ -966,18 +969,35 @@ function inPeer(err, packet, chan)
   peer.send({js:js, body:packet.from.der});
 }
 
+// packets coming in to me
+function inRelayMe(err, packet, chan)
+{
+  if(err) return; // TODO clean up nets?
+  // TODO process body
+  debug("relay to me!");
+}
+
 // proxy packets for two hosts
 function inRelay(err, packet, chan)
 {
+  if(err) return;
   var self = packet.from.self;
+  
+  // see if this channel is set up to relay already
   if(!chan.to)
   {
+    // new relay channel, validate destination
     if(!isHEX(packet.js.to, 64)) return warn("invalid relay of", packet.js.to, "from", packet.from.address);
+
+    // if it's to us, handle that directly
     if(packet.js.to == self.hashname)
     {
-      // TODO to us!
+      chan.callback = inRelayMe;
+      inRelayMe(err, packet, chan);
       return;
     }
+
+    // if to someone else, save them for future packets
     chan.to = self.whois(packet.js.to);
     if(!chan.to || !chan.to.lineIn) return warn("relay to unknown line", packet.js.to, packet.from.address);
   }
