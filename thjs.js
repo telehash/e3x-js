@@ -189,7 +189,7 @@ function meshNearest(self)
   Object.keys(self.all).map(function(h){return self.all[h]}).sort(function(a,b){
     return dhash(self.hashname,a) - dhash(self.hashname,b);
   }).slice(0,100).forEach(function(hn){
-    if(hn.lineOut || hn.meshTried) return;
+    if(hn.lineOut || hn.meshTried || Object.keys(hn.chans).length > 0) return;
     hn.meshTried = true;
     debug("mesh trying new",hn.hashname);
     hn.seekping();
@@ -306,21 +306,15 @@ function online(callback)
 function receive(msg, net)
 {
 	var self = this;
-  // normalize what network info this packet came from
-  if(!net.type) 
-  {
-    net.type = "ip4";
-    net.id = net.ip+":"+net.port;
-  }
   var packet = local.pdecode(msg);
-  if(!packet) return warn("failed to decode a packet from", net.id, msg.toString());
+  if(!packet) return warn("failed to decode a packet from", net, msg.toString());
   if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
-  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", packet.sender);
+  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", net);
 
   packet.sender = net;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",net.id, packet.js.type, packet.body && packet.body.length);
+  debug("in",net, packet.js.type, packet.body && packet.body.length);
 
   // either it's an open
   if(packet.js.type == "open")
@@ -363,19 +357,28 @@ function receive(msg, net)
     from.send = function(packet) {
       var to = packet.to||from.net;
       debug("line sending",from.hashname, to.id, packet.js);
+      var lined = local.lineize(from, packet);
       from.sentAt = Date.now();
+      // a relay network must be resolved to the channel and wrapped/sent that way
+      if(to.type == "relay")
+      {
+        var via = self.whois(to.via);
+        if(!via || !via.chans[to.id]) return debug("dropping dead relay via",to.via);
+        return via.chans[to.id].send({body:lined});
+      }
       // TODO if line hasn't responded, break it and start over
-      self.send(to, local.lineize(from, packet));
+      self.send(to, lined);
     }
     
     // handle all incoming line packets
     from.receive = function(packet)
     {
 //      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
-      from.recvAt = Date.now();
       if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
 
       debug("LINEIN",JSON.stringify(packet.js));
+      from.recvAt = Date.now();
+      from.netIn(packet.sender);
 
       // find any existing channel
       var chan = from.chans[packet.js.c];
@@ -449,21 +452,26 @@ function whois(hashname)
   hn.start = channel;
   hn.raw = raw;
 
-  // manage network information consistently
+  // manage network information consistently, called on all validated incoming packets
   hn.netIn = function(net, isOpen)
   {
-    if(!hn.net || isOpen) hn.net = net; // set default outgoing
-    // always normalize to ip4 address bases
+    // always normalize to ip4 address as default
     if(!net.id)
     {
       net.type = "ip4";
       net.id = net.ip+":"+net.port;
     }
-    hn.nets[net.id] = net; // always replace/update
-    // always use the newest ip4 address for see responses
-    if(net.type == "ip4" && hn.net == net) hn.address = [hn.hashname, net.ip, net.port].join(",");
-    // if we're defaulting to a relay and have better default, always upgrade that
-    if(hn.net.type == "relay" && net.type != "relay") hn.net = net;
+
+    // set/update the default outgoing
+    if(!hn.net || isOpen || hn.net.type == "relay") hn.net = net;
+    if(hn.nets[net.id]) return;
+    hn.nets[net.id] = net;
+
+    // always use the most recent ip4 address for see responses
+    if(net.type == "ip4") hn.address = [hn.hashname, net.ip, net.port].join(",");
+    
+    // when either multiple networks or only relay, trigger a ping
+    if(Object.keys(hn.nets).length > 1 || hn.net.type == "relay") hn.ping();
   }
 
   // internal, trying to send on a line needs to create it first
@@ -569,7 +577,14 @@ function whois(hashname)
       var relay = self.whois(to.relay);
       relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
     }
-  }  
+  }
+  
+  // send a network ping
+  hn.ping = function()
+  {
+    debug("pinging",hn.hashname,hn.nets);
+  }
+
   return hn;
 }
 
@@ -679,6 +694,7 @@ function raw(type, arg, callback)
   // minimal wrapper to send raw packets
   chan.send = function(packet)
   {
+    if(!packet.js) packet.js = {};
     packet.js.c = chan.id;
     debug("SEND",chan.type,JSON.stringify(packet.js));
     hn.send(packet);
@@ -973,8 +989,11 @@ function inPeer(err, packet, chan)
 function inRelayMe(err, packet, chan)
 {
   if(err) return; // TODO clean up nets?
-  // TODO process body
-  debug("relay to me!");
+  if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.address);
+  var self = packet.from.self;
+  // create a network that maps back to this channel
+  var net = {type:"relay",id:chan.id,via:packet.from.hashname};
+  self.receive(packet.body, net);
 }
 
 // proxy packets for two hosts
