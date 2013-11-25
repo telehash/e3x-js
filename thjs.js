@@ -49,7 +49,18 @@ exports.hashname = function(key, send, args)
   // udp socket stuff
   self.pcounter = 1;
   self.receive = receive;
-	self.send = send; // external sending function passed in
+  // outgoing packets to the network
+	self.send = function(to, msg){
+    // a relay network must be resolved to the channel and wrapped/sent that way
+    if(to.type == "relay")
+    {
+      var via = self.whois(to.via);
+      if(!via || !via.chans[to.id]) return debug("dropping dead relay via",to.via);
+      return via.chans[to.id].send({body:msg});
+    }
+    // hand rest to the external sending function passed in
+	  send(to, msg);
+	};
   
   // need some seeds to connect to, addSeed({ip:"1.2.3.4", port:5678, public:"PEM"})
   self.addSeed = addSeed;
@@ -311,6 +322,7 @@ function receive(msg, net)
   if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
   if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", net);
 
+//  if(net.port && net.port !== 42424) return debug("TEST DROP");
   packet.sender = net;
   packet.id = self.pcounter++;
   packet.at = Date.now();
@@ -347,10 +359,11 @@ function receive(msg, net)
     from.lineIn = open.js.line;
 
     // do we need to send them an open yet?
-    if (!from.sentOpen) from.open();
+    if (!from.sentOpen) from.open(net);
 
     // line is open now!
     local.openline(from, open);
+    self.lines[from.lineOut] = from;
     bucketize(self, from); // add to their bucket
     
     // replace function to send things via the line
@@ -359,14 +372,7 @@ function receive(msg, net)
       debug("line sending",from.hashname, to.id, packet.js);
       var lined = local.lineize(from, packet);
       from.sentAt = Date.now();
-      // a relay network must be resolved to the channel and wrapped/sent that way
-      if(to.type == "relay")
-      {
-        var via = self.whois(to.via);
-        if(!via || !via.chans[to.id]) return debug("dropping dead relay via",to.via);
-        return via.chans[to.id].send({body:lined});
-      }
-      // TODO if line hasn't responded, break it and start over
+      // TODO if line hasn't responded, call hn.sync() which will resend open if fail
       self.send(to, lined);
     }
     
@@ -470,8 +476,8 @@ function whois(hashname)
     // always use the most recent ip4 address for see responses
     if(net.type == "ip4") hn.address = [hn.hashname, net.ip, net.port].join(",");
     
-    // when either multiple networks or only relay, trigger a ping
-    if(Object.keys(hn.nets).length > 1 || hn.net.type == "relay") hn.ping();
+    // when either multiple networks or only relay, trigger a sync
+    if(Object.keys(hn.nets).length > 1 || hn.net.type == "relay") hn.sync();
   }
 
   // internal, trying to send on a line needs to create it first
@@ -560,16 +566,16 @@ function whois(hashname)
     var js = {type:"peer", end:true, "peer":hashname, c:local.randomHEX(16)};
     // if on the same NAT'd IP, ask for a relay
     if(self.nat && ip == self.pubip) js.relay = true;
+//    if(hashname == "c6db0918a767f00b9841f4366ade7ffc13c86541c40bf0a1612e939988fdefb0") js.relay = true;
     hn.send({js:js});
   }
 
-  // just send an open packet, direct overrides the network
+  // force send an open packet, direct overrides the network
   hn.open = function(direct)
   {
     hn.sentOpen = true;
     var open = local.openize(self, hn);
     var to = direct||hn.net;
-    self.lines[hn.lineOut] = hn;
     self.send(to, open);
     // if a relay is requested, open to that too
     if(to.relay)
@@ -579,10 +585,11 @@ function whois(hashname)
     }
   }
   
-  // send a network ping
-  hn.ping = function()
+  // send a network sync
+  hn.sync = function()
   {
     debug("pinging",hn.hashname,hn.nets);
+    // TODO on all timeout, resend open since line may be dead
   }
 
   return hn;
@@ -860,7 +867,11 @@ function channel(type, arg, callback)
     if(!chan.outq.length) return;
     var lastpacket = chan.outq[chan.outq.length-1];
     // timeout force-end the channel
-    if(Date.now() - lastpacket.sentAt > chan.timeout) return chan.fail({js:{err:"timeout"}});
+    if(Date.now() - lastpacket.sentAt > chan.timeout)
+    {
+      chan.fail({js:{err:"timeout"}});
+      return;
+    }
     debug("channel resending");
     chan.ack(lastpacket);
     setTimeout(chan.resend, defaults.chan_resend); // recurse until chan_timeout
@@ -956,7 +967,7 @@ function inConnect(err, packet, chan)
   to.netIn(net);
 
   // if relay is requested, flag that
-  if(packet.js.relay === true) net.relay = packet.from;
+  if(packet.js.relay === true) net.relay = packet.from.hashname;
 
   // don't resend to fast to prevent abuse/amplification
   if(to.sentOpen)
@@ -1003,7 +1014,7 @@ function inRelay(err, packet, chan)
   var self = packet.from.self;
   
   // see if this channel is set up to relay already
-  if(!chan.to)
+  if(!chan.pair)
   {
     // new relay channel, validate destination
     if(!isHEX(packet.js.to, 64)) return warn("invalid relay of", packet.js.to, "from", packet.from.address);
@@ -1017,8 +1028,12 @@ function inRelay(err, packet, chan)
     }
 
     // if to someone else, save them for future packets
-    chan.to = self.whois(packet.js.to);
-    if(!chan.to || !chan.to.lineIn) return warn("relay to unknown line", packet.js.to, packet.from.address);
+    var to = self.whois(packet.js.to);
+    if(!to || !to.lineIn) return warn("relay to unknown line", packet.js.to, packet.from.address);
+    
+    // set up the reverse channel and x-link them
+    chan.pair = to.raw("relay",{id:chan.id},inRelay);
+    chan.pair.pair = chan;
   }
 
   // throttle
@@ -1032,7 +1047,7 @@ function inRelay(err, packet, chan)
 
   // dumb relay
   chan.relayed = Date.now();
-  chan.to.send(packet);
+  chan.pair.send(packet);
 }
 
 // return array of nearby hashname objects
