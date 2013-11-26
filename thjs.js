@@ -86,7 +86,7 @@ exports.hashname = function(key, send, args)
 	self.raws["connect"] = inConnect;
 	self.raws["seek"] = inSeek;
 	self.raws["relay"] = inRelay;
-	self.raws["sync"] = inSync;
+	self.raws["path"] = inPath;
 
   // primarily internal, to seek/connect to a hashname
   self.seek = seek;
@@ -259,8 +259,7 @@ function addSeed(arg) {
   var der = local.key2der(arg.pubkey);
   var seed = self.whois(local.der2hn(der));
   seed.der = der;
-  if(arg.net) seed.netIn(arg.net);
-  if(arg.ip) seed.netIn({ip:arg.ip,port:parseInt(arg.port)});
+  if(arg.ip) seed.pathIn({ip:arg.ip,port:parseInt(arg.port)});
   seed.isSeed = true;
   self.seeds.push(seed);
 }
@@ -273,16 +272,19 @@ function myVia(from, address)
   var parts = address.split(",");
   if(parts.length != 3) return;
   if(parts[0] !== self.hashname) return;
+  if(parts[1] == "127.0.0.1") return; // ignore localhost
   // if it's a seed (trusted) update our known public IP/Port
   if(from.isSeed || !self.pubip)
   {
     self.pubip = parts[1];
-    self.pubport = parseInt(parts[2]);    
+    self.pubport = parseInt(parts[2]);
+    self.address = [self.hashname,self.pubip,self.pubport].join(",");
   }else{
     // TODO multiple public IPs?
   }
   // detect when not NAT'd
   self.nat = (self.ip == self.pubip && self.port == self.pubport) ? false : true;  
+  debug("NAT",self.nat,self.address,self.ip,self.port);
 }
 
 function online(callback)
@@ -300,6 +302,7 @@ function online(callback)
       callback();
       dones = 0;
       meshLoop(self);
+      return;
     }
     dones--;
     // failed
@@ -316,19 +319,19 @@ function online(callback)
 }
 
 // self.receive, raw incoming udp data
-function receive(msg, net)
+function receive(msg, path)
 {
 	var self = this;
   var packet = local.pdecode(msg);
-  if(!packet) return warn("failed to decode a packet from", net, msg.toString());
+  if(!packet) return warn("failed to decode a packet from", path, msg.toString());
   if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
-  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", net);
+  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", path);
 
-//  if(net.port && net.port !== 42424) return debug("TEST DROP");
-  packet.sender = net;
+//  if(path.port && path.port !== 42424) return debug("TEST DROP");
+  packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",net, packet.js.type, packet.body && packet.body.length);
+  debug("in",path, packet.js.type, packet.body && packet.body.length);
 
   // either it's an open
   if(packet.js.type == "open")
@@ -350,7 +353,7 @@ function receive(msg, net)
     debug("inOpen verified", from.hashname);
     from.openAt = open.js.at;
     from.der = open.rsa;
-    from.netIn(net, true); // forces full reset
+    from.pathIn(path, true); // forces full reset
     from.recvAt = Date.now();
 
     // was an existing line already, being replaced
@@ -361,7 +364,7 @@ function receive(msg, net)
     from.lineIn = open.js.line;
 
     // do we need to send them an open yet?
-    if (!from.sentOpen) from.open(net);
+    if (!from.sentOpen) from.open(path);
 
     // line is open now!
     local.openline(from, open);
@@ -370,7 +373,7 @@ function receive(msg, net)
     
     // replace function to send things via the line
     from.send = function(packet) {
-      var to = packet.to||from.net;
+      var to = packet.to||from.path;
       if(!to) return warn("dropping packet, no network info for recipient",from.hashname);
       debug("line sending",from.hashname, to.id, packet.js);
       var lined = local.lineize(from, packet);
@@ -386,7 +389,7 @@ function receive(msg, net)
 
       debug("LINEIN",JSON.stringify(packet.js));
       from.recvAt = Date.now();
-      from.netIn(packet.sender);
+      from.pathIn(packet.sender);
 
       // find any existing channel
       var chan = from.chans[packet.js.c];
@@ -454,50 +457,54 @@ function whois(hashname)
 
   var hn = self.all[hashname];
 	if(hn) return hn;
-  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, nets:{}, isAlive:0};
+  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:{}, isAlive:0};
   hn.at = Date.now();
 
   // to create a new channels to this hashname
   hn.start = channel;
   hn.raw = raw;
 
-  // set new default
-  hn.netSet = function(net)
+  // set/update path priority/default
+  hn.pathSet = function(path, priority)
   {
-    hn.net = net;
+    // if valid new priority, update it
+    if(typeof priority == "number") path.priority = priority;
+    // if higher/better path, change default
+    if(!hn.path || hn.path.priority <= path.priority) hn.path = path;
     // always update ipv4 address for see responses
-    if(net.type == "ipv4") hn.address = [hn.hashname, net.ip, net.port].join(",");
+    if(hn.path.type == "ipv4") hn.address = [hn.hashname, hn.path.ip, hn.path.port].join(",");
   }
 
   // manage network information consistently, called on all validated incoming packets
-  hn.netIn = function(net, isOpen)
+  hn.pathIn = function(path, isOpen)
   {
     // always normalize to ipv4 address as default
-    if(!net.id)
+    if(!path.id)
     {
-      net.type = "ipv4";
-      net.id = net.ip+":"+net.port;
+      path.type = "ipv4";
+      path.id = path.ip+":"+path.port;
+      path.priority = 1;
     }
 
     // reset all network info on any open
     if(isOpen) {
-      hn.nets = {};
-      delete hn.net;
+      hn.paths = {};
+      delete hn.path;
     }    
 
     // set/update the default outgoing
-    if(!hn.net || hn.net.type == "relay") hn.netSet(net);
+    hn.pathSet(path);
 
     // return existing matching
-    if(hn.nets[net.id]) return hn.nets[net.id];
+    if(hn.paths[path.id]) return hn.paths[path.id];
 
     // is a new network
-    hn.nets[net.id] = net;
+    hn.paths[path.id] = path;
 
     // when either multiple networks or only relay, trigger a sync
-    if(Object.keys(hn.nets).length > 1 || hn.net.type == "relay") hn.sync();
+    if(Object.keys(hn.paths).length > 1 || hn.path.type == "relay") hn.sync();
     
-    return net;
+    return path;
   }
 
   // internal, trying to send on a line needs to create it first
@@ -507,7 +514,7 @@ function whois(hashname)
     hn.onLine = function(){ hn.send(packet) }
 
     // if any pub key and network, try that
-    if(hn.der && hn.net) return hn.open();
+    if(hn.der && hn.path) return hn.open();
 
     // if any via information, try them all! (usually only one)
     if(hn.vias)
@@ -522,7 +529,7 @@ function whois(hashname)
           // if possibly behind the same NAT, set flag to allow/ask for a relay
           if(self.nat && address[1]) hn.relay = true;
         }
-        self.whois(via).peer(hn.hashname); // send the peer request
+        self.whois(via).peer(hn.hashname, hn.relay); // send the peer request
       });
       // so next time it'll re-seek
       delete hn.vias;
@@ -605,7 +612,6 @@ function whois(hashname)
   {
     var js = {type:"peer", end:true, "peer":hashname, c:local.randomHEX(16)};
     if(relay) js.relay = true;
-//    if(hashname == "c6db0918a767f00b9841f4366ade7ffc13c86541c40bf0a1612e939988fdefb0") js.relay = true;
     hn.send({js:js});
   }
 
@@ -614,7 +620,7 @@ function whois(hashname)
   {
     hn.sentOpen = true;
     var open = local.openize(self, hn);
-    var to = direct||hn.net;
+    var to = direct||hn.path;
     self.send(to, open);
     // if a relay is requested, open to that too
     if(to.relay)
@@ -624,40 +630,40 @@ function whois(hashname)
     }
   }
   
-  // send a full network sync, callback(true||false) if err (no networks)
+  // send a full network path sync, callback(true||false) if err (no networks)
   hn.sync = function(callback)
   {
     if(!callback) callback = function(){};
     // go through existing and set/decrement priority, drop any old nets
-    Object.keys(hn.nets).forEach(function(id){
-      var net = hn.nets[id];
-      if(!net.priority || net.priority > 0) net.priority = 0;
-      net.priority--;
-      if(net.priority < -3) delete hn.nets[id];
+    Object.keys(hn.paths).forEach(function(id){
+      var path = hn.paths[id];
+      if(!path.priority || path.priority > 0) path.priority = 0;
+      path.priority--;
+      if(path.priority < -3) delete hn.paths[id];
     });
 
-    debug("syncing",hn.hashname,hn.nets);
-    var refcnt = Object.keys(hn.nets).length;
+    debug("syncing",hn.hashname,hn.paths);
+    var refcnt = Object.keys(hn.paths).length;
 
     // empty. fail.
     if(refcnt == 0) {
-      delete hn.net;
+      delete hn.path;
       callback(true);
       return;
     }
 
-    Object.keys(hn.nets).forEach(function(id){
-      var net = hn.nets[id];
+    // check all paths at once
+    Object.keys(hn.paths).forEach(function(id){
+      var path = hn.paths[id];
       var js = {};
-      js.priority = (net.type == "ipv4") ? 1 : 0;
+      js.priority = (path.type == "ipv4") ? 1 : 0;
       // include local ip/port if we're relaying to them
-      if(hn.relay && net.type == "relay") js.nets = [{type:"ipv4", ip:self.ip, port:self.port}];
-      hn.raw("sync",{js:js, timeout:3000}, function(err, packet){
-        // update any priority and default network
-        if(typeof packet.js.priority == "number") net.priority = packet.js.priority;
-        if(net.priority >= hn.net.priority) hn.netSet(net);
-        // processed all and return flag if there was no new default
-        if((refcnt--) == 0) callback(hn.net.priority < 0);
+      if(hn.relay && path.type == "relay") js.alts = [{type:"ipv4", ip:self.ip, port:self.port}];
+      hn.raw("path",{js:js, timeout:3000}, function(err, packet){
+        // handle any .priority and .alts
+        inPath(true, packet);
+        // processed all paths and return flag if there was no good default
+        if((refcnt--) == 0) callback(hn.path.priority < 0);
       });
     });
   }
@@ -713,7 +719,7 @@ function seek(hn, callback)
     if(did[mine] || doing[mine]) return loop();
     var distance = dhash(hn.hashname, mine);
     if(distance > closest) return loop(); // don't "back up" further away
-    closest = distance;
+    if(!self.seeds[mine]) closest = distance; // update distance if not talking to a seed
     doing[mine] = true;
     var to = self.whois(mine);
     to.seek(hn.hashname, function(err, see){
@@ -1036,12 +1042,12 @@ function inConnect(err, packet, chan)
   var to = packet.from.self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
 
-  // save the suggested network
-  var net = {ip:packet.js.ip,port:packet.js.port};
-  to.netIn(net);
+  // save the suggested network path
+  var path = {ip:packet.js.ip,port:packet.js.port};
+  to.pathIn(path);
 
   // if relay is requested, flag that
-  if(packet.js.relay === true) net.relay = packet.from.hashname;
+  if(packet.js.relay === true) path.relay = packet.from.hashname;
 
   // don't resend to fast to prevent abuse/amplification
   if(to.sentOpen)
@@ -1053,8 +1059,8 @@ function inConnect(err, packet, chan)
     to.der = der;
   }
 
-  // always send the open to the requested network
-  to.open(net);
+  // always send the open to the requested network path
+  to.open(path);
 }
 
 // be the middleman to help NAT hole punch
@@ -1077,8 +1083,8 @@ function inRelayMe(err, packet, chan)
   if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.address);
   var self = packet.from.self;
   // create a network that maps back to this channel
-  var net = {type:"relay",id:chan.id,via:packet.from.hashname};
-  self.receive(packet.body, net);
+  var path = {type:"relay",id:chan.id,via:packet.from.hashname};
+  self.receive(packet.body, path);
 }
 
 // proxy packets for two hosts
@@ -1165,21 +1171,21 @@ function inSeek(err, packet, chan)
 }
 
 // update/respond to network state
-function inSync(err, packet, chan)
+function inPath(err, packet, chan)
 {
-  if(err) return; // bye bye bye!
-  if(Array.isArray(packet.js.nets)) packet.js.nets.forEach(function(net){
-    if(net.type != "ipv4") return; // only supported for now
-    net.id = net.ip + ":" + net.port;
-    if(packet.from.nets[net.id]) return;
-    // a new one, experimentally send it a sync
-    packet.from.raw("sync",{js:{priority:1},to:net}, function(err, packet){
-      if(typeof packet.js.priority != "number") return;
-      // add/update priority
-      packet.from.netIn(net).priority = packet.js.priority;
-    });
+  // check/try any alternate paths
+  if(Array.isArray(packet.js.alts)) packet.js.alts.forEach(function(path){
+    if(path.type != "ipv4") return; // only supported for now
+    path.id = path.ip + ":" + path.port;
+    if(packet.from.paths[path.id]) return;
+    // a new one, experimentally send it a path
+    packet.from.raw("path",{js:{priority:1},to:path}, inPath);
   });
-  // prioritize everything above relay
+  // update any optional priority information
+  if(typeof packet.js.priority == "number") packet.from.pathSet(packet.sender, packet.js.priority);
+  if(err) return; // bye bye bye!
+  
+  // need to respond, prioritize everything above relay
   var priority = (packet.sender.type == "relay") ? 0 : 1;
   chan.send({js:{end:true, priority:priority}});
 }
