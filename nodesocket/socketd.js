@@ -1,8 +1,7 @@
 var dgram = require("dgram");
+var os = require("os");
 
 var port = process.env.PORT || 8008;
-
-
 
 var httpServer = require("http").createServer(function(req, resp) {
   req.url.replace("..",""); // this is super dumb minimal stub, don't actually use as a server
@@ -24,8 +23,29 @@ io.sockets.on("connection", function (socket) {
     server.close();
   });
   server.on("listening", function() {
-    console.log("connected",socket.id);
+    console.log("connected",socket.id,server.address());
     socket.emit('connected', {});
+    // update client of local addresses
+    var ip = server.address().address;
+    var port = server.address().port;    
+    function interfaces()
+    {
+      var ifaces = os.networkInterfaces()
+      var local;
+      for (var dev in ifaces) {
+        ifaces[dev].forEach(function(details){
+          if(details.family == "IPv4" && !details.internal) local = details.address;
+        });
+      }
+      // when new local address, send update
+      if(local && local != ip)
+      {
+        ip = local;
+        socket.emit('local',{ip:ip, port:port});
+      }
+      setTimeout(interfaces,10000);
+    }
+    interfaces();
   });
   server.on("message", function (msg, rinfo) {
     console.log("server got: " + msg.toString("hex") + " from " + rinfo.address + ":" + rinfo.port)
