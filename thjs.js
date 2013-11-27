@@ -51,6 +51,7 @@ exports.hashname = function(key, send, args)
   self.receive = receive;
   // outgoing packets to the network
 	self.send = function(to, msg){
+    if(!to) return warn("send called w/ no network, dropping");
     // a relay network must be resolved to the channel and wrapped/sent that way
     if(to.type == "relay")
     {
@@ -59,6 +60,7 @@ exports.hashname = function(key, send, args)
       return via.chans[to.id].send({body:msg});
     }
     // hand rest to the external sending function passed in
+    debug("out",(typeof msg.length == "function")?msg.length():msg.length,to.ip,to.port);
 	  send(to, msg);
 	};
   
@@ -179,7 +181,7 @@ function meshReap(self)
   var hn;
   function del(why)
   {
-    if(hn.lineIn) delete self.lines[hn.lineIn];
+    if(hn.lineOut) delete self.lines[hn.lineOut];
     delete self.all[hn.hashname];
     debug("reaping ", hn.hashname, why);
   }
@@ -331,7 +333,7 @@ function receive(msg, path)
   packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",path, packet.js.type, packet.body && packet.body.length);
+  debug("in",(typeof msg.length == "function")?msg.length():msg.length,path.ip,path.port, packet.js.type, packet.body && packet.body.length);
 
   // either it's an open
   if(packet.js.type == "open")
@@ -353,7 +355,6 @@ function receive(msg, path)
     debug("inOpen verified", from.hashname);
     from.openAt = open.js.at;
     from.der = open.rsa;
-    from.pathIn(path, true); // forces full reset
     from.recvAt = Date.now();
 
     // was an existing line already, being replaced
@@ -368,6 +369,7 @@ function receive(msg, path)
 
     // line is open now!
     local.openline(from, open);
+    debug("line open",from.hashname,from.lineOut);
     self.lines[from.lineOut] = from;
     bucketize(self, from); // add to their bucket
     
@@ -389,7 +391,8 @@ function receive(msg, path)
 
       debug("LINEIN",JSON.stringify(packet.js));
       from.recvAt = Date.now();
-      from.pathIn(packet.sender);
+      // normalize/track sender network path
+      packet.sender = from.pathIn(packet.sender);
 
       // find any existing channel
       var chan = from.chans[packet.js.c];
@@ -415,6 +418,9 @@ function receive(msg, path)
       var chan = from[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
       chan.receive(packet);
     }
+
+    // forces full path reset
+    from.pathIn(path, true);
 
     // if anyone was waiting for a trigger
     if (from.onLine) {
@@ -483,33 +489,37 @@ function whois(hashname)
     {
       path.type = "ipv4";
       path.id = path.ip+":"+path.port;
-      path.priority = 1;
     }
 
     // reset all network info on any open
     if(isOpen) {
       hn.paths = {};
-      delete hn.path;
+      hn.path = path;
     }    
 
-    // set/update the default outgoing
+    // just use existing path entry
+    if(hn.paths[path.id])
+    {
+      path = hn.paths[path.id];
+    }else{
+      // store a new path
+      hn.paths[path.id] = path;
+      // when either multiple networks or only relay, trigger a sync
+      if(Object.keys(hn.paths).length > 1 || path.type == "relay") hn.sync();
+    }
+    
+    // always update to minimum 0 here
+    if(typeof path.priority != "number" || path.priority < 0) path.priority = 0;
+
+    // possibly update the default outgoing
     hn.pathSet(path);
 
-    // return existing matching
-    if(hn.paths[path.id]) return hn.paths[path.id];
-
-    // is a new network
-    hn.paths[path.id] = path;
-
-    // when either multiple networks or only relay, trigger a sync
-    if(Object.keys(hn.paths).length > 1 || hn.path.type == "relay") hn.sync();
-    
     return path;
   }
 
   // internal, trying to send on a line needs to create it first
   // this function gets replaced as soon as there's a line created
-  hn.send = function(packet){
+  function firstsend(packet){
     // try to re-send the packet as soon as there's a line
     hn.onLine = function(){ hn.send(packet) }
 
@@ -552,6 +562,7 @@ function whois(hashname)
       hn.send(packet);
     });
   }
+  hn.send = firstsend;
   
   // called whenever there's some signal the line is working or not
   hn.alive = function(good)
@@ -559,9 +570,11 @@ function whois(hashname)
     if(!hn.lineOut) return;
     if(good) return hn.isAlive = 1;
     hn.isAlive--;
-    debug("alive check",hn.hashname,hn.isAlive);
-    // at two thresholds, try a sync and failing that, try a new open
-    if(hn.isAlive == -2 || hn.isAlive == -4) hn.sync(function(err){
+    if(hn.isAlive >= 0) return;
+    debug("alive fail",hn.hashname,hn.isAlive,hn.path);
+    // at thresholds, try a sync and failing that, try a new open
+    if(hn.path && hn.isAlive % 2 == 0) hn.sync(function(err){
+      debug("alive sync",err);
       if(err) hn.open();
     });
   }
@@ -621,6 +634,7 @@ function whois(hashname)
     hn.sentOpen = true;
     var open = local.openize(self, hn);
     var to = direct||hn.path;
+    if(!to) return debug("can't open, no network path",hn.hashname);
     self.send(to, open);
     // if a relay is requested, open to that too
     if(to.relay)
@@ -633,24 +647,25 @@ function whois(hashname)
   // send a full network path sync, callback(true||false) if err (no networks)
   hn.sync = function(callback)
   {
-    if(!callback) callback = function(){};
-    // go through existing and set/decrement priority, drop any old nets
-    Object.keys(hn.paths).forEach(function(id){
-      var path = hn.paths[id];
-      if(!path.priority || path.priority > 0) path.priority = 0;
-      path.priority--;
-      if(path.priority < -3) delete hn.paths[id];
-    });
+    function done()
+    {
+      // TODO definitely need to rethink/refactor line ending state
+      if(callback) callback(hn.path.priority < 0);
+      if(hn.path.priority >= -2) return;
+      debug("failing the line, no paths valid",hn.lineOut,hn.hashname);
+      delete hn.path;
+      if(hn.lineOut) delete self.lines[hn.lineOut];
+      delete hn.lineOut;
+      delete hn.sentOpen;
+      delete hn.lineIn;
+      hn.send = firstsend;
+    }
 
     debug("syncing",hn.hashname,hn.paths);
     var refcnt = Object.keys(hn.paths).length;
 
-    // empty. fail.
-    if(refcnt == 0) {
-      delete hn.path;
-      callback(true);
-      return;
-    }
+    // empty. fail the line and reset the hn
+    if(refcnt == 0) return done();
 
     // check all paths at once
     Object.keys(hn.paths).forEach(function(id){
@@ -660,10 +675,13 @@ function whois(hashname)
       // include local ip/port if we're relaying to them
       if(hn.relay && path.type == "relay") js.alts = [{type:"ipv4", ip:self.ip, port:self.port}];
       hn.raw("path",{js:js, timeout:3000}, function(err, packet){
-        // handle any .priority and .alts
-        inPath(true, packet);
-        // processed all paths and return flag if there was no good default
-        if((refcnt--) == 0) callback(hn.path.priority < 0);
+        // when it actually errored, negate/decrement priority
+        if(err && err !== true) hn.pathSet(path, (path.priority<0)?(path.priority - 1):-1);
+        else inPath(true, packet); // handles any response .priority and .alts
+        // if it's failed thrice, delist
+        if(path.priority < -2) delete hn.paths[id];
+        // processed all paths
+        if((--refcnt) == 0) done();
       });
     });
   }
@@ -688,7 +706,9 @@ function seek(hn, callback)
   // always process potentials in order
   function sort()
   {
-    queue.sort(function(a,b){dhash(hn.hashname,a) - dhash(hn.hashname,b)});    
+    queue = queue.sort(function(a,b){
+      return dhash(hn.hashname,a) - dhash(hn.hashname,b)
+    });
   }
   sort();
 
@@ -1042,13 +1062,6 @@ function inConnect(err, packet, chan)
   var to = packet.from.self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
 
-  // save the suggested network path
-  var path = {ip:packet.js.ip,port:packet.js.port};
-  to.pathIn(path);
-
-  // if relay is requested, flag that
-  if(packet.js.relay === true) path.relay = packet.from.hashname;
-
   // don't resend to fast to prevent abuse/amplification
   if(to.sentOpen)
   {
@@ -1058,6 +1071,12 @@ function inConnect(err, packet, chan)
   }else{
     to.der = der;
   }
+
+  // create the suggested network path
+  var path = {type:"ipv4",ip:packet.js.ip,port:packet.js.port};
+
+  // if relay is requested, flag that
+  if(packet.js.relay === true) path.relay = packet.from.hashname;
 
   // always send the open to the requested network path
   to.open(path);
