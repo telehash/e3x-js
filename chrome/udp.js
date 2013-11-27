@@ -33,6 +33,7 @@ udp.create = function(cb)
     chrome.socket.bind(info.socketId, "0.0.0.0", 0, function(err){
       if(err) return chrome.socket.destroy(info.socketId) + cb();
       chrome.socket.getInfo(info.socketId, function(sock){
+        console.log("socket info",sock)
         sock.id = info.socketId;
         sock.poll = poll;
         sock.poll();
@@ -41,6 +42,16 @@ udp.create = function(cb)
           chrome.socket.sendTo(sock.id, str2ab(msg), to.ip, parseInt(to.port), function(wi){
             console.log("sendTo",wi);
           });
+        }
+        // update the .ip and .port to local addresses
+        sock.setLocal = function(obj){
+          obj.port = sock.localPort;
+          // get the current ipv4 address from the local network interfaces
+          chrome.socket.getNetworkList(function(local){
+            if(Array.isArray(local)) local.forEach(function(iface){
+              if(iface.address && iface.address.split(".").length == 4) obj.ip = iface.address;
+            });
+          });          
         }
         cb(sock);
       })

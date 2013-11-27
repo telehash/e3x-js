@@ -13,6 +13,12 @@ function load()
         console.log("sending", to.hashname, msg.length());
         sock.send(to, msg.bytes());
       });
+      // every 10 sec update local IP
+      function locals(){
+        sock.setLocal(me);
+        setTimeout(locals, 10000);
+      }
+      locals();
       sock.receive = function(msg,from){me.receive(msg,from)};
     	console.log("switch created",me);
       document.querySelector("#hashname").innerHTML = me.hashname;
