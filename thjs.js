@@ -63,6 +63,13 @@ exports.hashname = function(key, send, args)
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,to.ip,to.port);
 	  send(to, msg);
 	};
+  self.setIP = function(ip)
+  {
+    var updated = false;
+    if(self.ip && self.ip != ip) updated = true;
+    self.ip = ip;
+    if(updated) meshPing(self);
+  }
   
   // need some seeds to connect to, addSeed({ip:"1.2.3.4", port:5678, public:"PEM"})
   self.addSeed = addSeed;
@@ -607,9 +614,10 @@ function whois(hashname)
   }
   
   // use seek to ping them by seeking ourselves, used by mesh* stuff
-  hn.seekping = function()
+  hn.seekping = function(callback)
   {
     hn.raw("seek", {js:{"seek":self.hashname}}, function(err, packet){
+      if(callback) callback(err!==true);
       if(!Array.isArray(packet.js.see)) return;
       // load any sees to be fodder for mesh stuff
       packet.js.see.forEach(function(address){

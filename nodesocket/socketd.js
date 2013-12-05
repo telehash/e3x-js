@@ -6,7 +6,7 @@ var port = process.env.PORT || 8008;
 var httpServer = require("http").createServer(function(req, resp) {
   req.url.replace("..",""); // this is super dumb minimal stub, don't actually use as a server
   var path = ".."+req.url;
-  if(req.url == "/") path = "./socket.html";
+  if(req.url == "/") path = "../fieldtest/index.html";
     require("fs").readFile(path, "utf8", function(error, content) {
         resp.writeHeader(200, {"Content-Type": "text/html"});
         resp.end(content);

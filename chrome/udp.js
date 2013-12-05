@@ -49,7 +49,7 @@ udp.create = function(cb)
           // get the current ipv4 address from the local network interfaces
           chrome.socket.getNetworkList(function(local){
             if(Array.isArray(local)) local.forEach(function(iface){
-              if(iface.address && iface.address.split(".").length == 4) obj.ip = iface.address;
+              if(iface.address && iface.address.split(".").length == 4) obj.setIP(iface.address);
             });
           });          
         }
