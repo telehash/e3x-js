@@ -35,9 +35,10 @@ function seeds(id, callback)
 {
   var xhr = new XMLHttpRequest();
   xhr.onreadystatechange = function() {
-    if(!xhr.responseText) return;
+    if(!id || !xhr.responseText) return;
     id.seeds = JSON.parse(xhr.responseText);
     callback(id);
+    id = false;
   }
   xhr.open("GET", "seeds.json", true);
   xhr.send();
