@@ -2,5 +2,5 @@ node_modules/
 chrome/includes
 chrome/thjs.js
 chrome/thforge.js
-chrome/seeds.js
+chrome/seeds.json
 npm-debug.log

@@ -22,7 +22,7 @@ function load()
       sock.receive = function(msg,from){me.receive(msg,from)};
     	console.log("switch created",me);
       document.querySelector("#hashname").innerHTML = me.hashname;
-			seeds.forEach(me.addSeed, me);
+			id.seeds.forEach(me.addSeed, me);
 			me.online(function(err,to){
 			  console.log("online",err,to&&to.hashname);
         document.querySelector("#online").innerHTML = err||"online";
@@ -31,13 +31,26 @@ function load()
   });
 }
 
+function seeds(id, callback)
+{
+  var xhr = new XMLHttpRequest();
+  xhr.onreadystatechange = function() {
+    if(!xhr.responseText) return;
+    id.seeds = JSON.parse(xhr.responseText);
+    callback(id);
+  }
+  xhr.open("GET", "seeds.json", true);
+  xhr.send();
+  
+}
+
 function getId(callback)
 {
 	chrome.storage.local.get(["public","private"], function(id){
-	  if(id.public) return callback(id);
+	  if(id.public) return seeds(id, callback);
     thforge.genkey(function(err, id){
       chrome.storage.local.set(id);
-      callback(id);
+      seeds(id, callback);
     });
 	});
 }

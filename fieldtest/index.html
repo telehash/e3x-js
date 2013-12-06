@@ -33,7 +33,6 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         <script src="/includes/rng.js"></script>
       	<script src="/thjs.js"></script>
       	<script src="/thforge.js"></script>
-      	<script src="/seeds.js"></script>
         <script src="/socket.io/socket.io.js"></script>
         <script>
         thforge.forge(forge);
@@ -44,7 +43,10 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         	{
         		var ret = {nick:localStorage.nick, public:localStorage.pubkey, private:localStorage.prikey};
         		console.log("returning key",ret);
-        		return callback(ret);
+           return $.getJSON("/seeds.json", function(seeds) {
+              ret.seeds = seeds||[];
+          		 callback(ret);
+            });
         	}
 
         	// generate/save one nicely
@@ -101,7 +103,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                     socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg.bytes())});
                   });
           	    	console.log("switch created",me);
-          				seeds.forEach(me.addSeed, me);
+          				id.seeds.forEach(me.addSeed, me);
           				me.online(function(err){
           					console.log("online",err,me.hashname);
                     if(err){
