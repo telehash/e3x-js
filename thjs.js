@@ -267,6 +267,7 @@ function addSeed(arg) {
   if(!arg.pubkey) return warn("invalid args to addSeed");
   var der = local.key2der(arg.pubkey);
   var seed = self.whois(local.der2hn(der));
+  if(seed === self) return; // can't add ourselves as a seed
   seed.der = der;
   if(arg.ip) seed.pathIn({ip:arg.ip,port:parseInt(arg.port)});
   seed.isSeed = true;
