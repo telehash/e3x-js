@@ -364,16 +364,10 @@ function receive(msg, path)
     from.openAt = open.js.at;
     from.der = open.rsa;
     from.recvAt = Date.now();
-
-    // was an existing line already, being replaced
-    if (from.lineIn && from.lineIn !== open.js.line) {
-      debug("changing lines", from.hashname);
-      from.sentOpen = false; // trigger resending them our open again
-    }
     from.lineIn = open.js.line;
 
-    // do we need to send them an open yet?
-    if (!from.sentOpen) from.open(path);
+    // this will send an open if needed
+    from.open(path);
 
     // line is open now!
     local.openline(from, open);
@@ -640,7 +634,10 @@ function whois(hashname)
   // force send an open packet, direct overrides the network
   hn.open = function(direct)
   {
-    hn.sentOpen = true;
+    // don't send again if we've sent one in the last few sec, prevents connect abuse
+    if(hn.sentOpen && (Date.now() - hn.sentOpen) < 3000) return;
+    hn.sentOpen = Date.now();
+
     var open = local.openize(self, hn);
     var to = direct||hn.path;
     if(!to) return debug("can't open, no network path",hn.hashname);
@@ -1070,16 +1067,7 @@ function inConnect(err, packet, chan)
   var der = local.der2der(packet.body);
   var to = packet.from.self.whois(local.der2hn(der));
   if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
-
-  // don't resend to fast to prevent abuse/amplification
-  if(to.sentOpen)
-  {
-    if(to.resentOpen && (Date.now() - to.resentOpen) < 2000) return warn("told to connect too fast, ignoring from",packet.from.address,"to",to.address, Date.now() - to.resentOpen);
-    to.resentOpen = Date.now();
-    to.sentOpen = false;
-  }else{
-    to.der = der;
-  }
+  to.der = der;
 
   // create the suggested network path
   var path = {type:"ipv4",ip:packet.js.ip,port:packet.js.port};
