@@ -2,7 +2,7 @@
 	"name": "thjs",
   "description": "An implementation of telehash in pure javascript that works in the browser.",
   "homepage": "https://github.com/telehash/thjs",
-	"version": "0.0.15",
+	"version": "0.0.16",
   "keywords": [
     "telehash",
     "crypto",
@@ -14,7 +14,7 @@
     "browser"
   ],
   "main":"thjs.js",
-  "files":["thjs.js","LICENSE","README.md","thforge.js","includes/jsbn.js","includes/jsbn2.js","includes/ec.js","includes/sec.js","includes/prng4.js","includes/rng.js"],
+  "files":["thjs.js","LICENSE","README.md","thforge.js","seeds.json","includes/jsbn.js","includes/jsbn2.js","includes/ec.js","includes/sec.js","includes/prng4.js","includes/rng.js"],
   "repository": {
     "type": "git",
     "url": "https://github.com/telehash/thjs.git"
