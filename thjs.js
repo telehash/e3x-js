@@ -267,6 +267,7 @@ function addSeed(arg) {
   if(!arg.pubkey) return warn("invalid args to addSeed");
   var der = local.key2der(arg.pubkey);
   var seed = self.whois(local.der2hn(der));
+  if(!seed) return warn("invalid seed info",arg);
   if(seed === self) return; // can't add ourselves as a seed
   seed.der = der;
   if(arg.ip) seed.pathIn({ip:arg.ip,port:parseInt(arg.port)});
@@ -635,7 +636,7 @@ function whois(hashname)
   hn.open = function(direct)
   {
     // don't send again if we've sent one in the last few sec, prevents connect abuse
-    if(hn.sentOpen && (Date.now() - hn.sentOpen) < 3000) return;
+    if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;
     hn.sentOpen = Date.now();
 
     var open = local.openize(self, hn);
@@ -657,7 +658,7 @@ function whois(hashname)
     {
       // TODO definitely need to rethink/refactor line ending state
       if(callback) callback(hn.path.priority < 0);
-      if(hn.path.priority >= -2) return;
+      if(hn.path.priority >= -2) return debug("sync done highest priority",hn.path.priority);
       debug("failing the line, no paths valid",hn.lineOut,hn.hashname);
       delete hn.path;
       if(hn.lineOut) delete self.lines[hn.lineOut];
