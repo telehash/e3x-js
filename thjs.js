@@ -793,7 +793,7 @@ function raw(type, arg, callback)
 
   debug("new unreliable channel",hn.hashname,chan.type);
 
-	// process packets at a raw level, handle all miss/ack tracking and ordering
+	// process packets at a raw level, very little to do
 	chan.receive = function(packet)
 	{
     // if err'd or ended, delete ourselves
