@@ -376,59 +376,14 @@ function receive(msg, path)
     self.lines[from.lineOut] = from;
     bucketize(self, from); // add to their bucket
     
-    // replace function to send things via the line
-    from.send = function(packet) {
-      var to = packet.to||from.path;
-      if(!to) return warn("dropping packet, no network info for recipient",from.hashname);
-      debug("line sending",from.hashname, to.id, packet.js);
-      var lined = local.lineize(from, packet);
-      from.sentAt = Date.now();
-      self.send(to, lined);
-    }
-    
-    // handle all incoming line packets
-    from.receive = function(packet)
-    {
-//      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
-      if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
+    // add this path in
+    from.pathIn(path);
 
-      debug("LINEIN",JSON.stringify(packet.js));
-      from.recvAt = Date.now();
-      // normalize/track sender network path
-      packet.sender = from.pathIn(packet.sender);
-
-      // find any existing channel
-      var chan = from.chans[packet.js.c];
-      if(chan) return chan.receive(packet);
-
-      // start a channel if one doesn't exist, check either reliable or unreliable types
-      var listening = {};
-      if(typeof packet.js.seq == "undefined") listening = self.raws;
-      if(packet.js.seq === 0) listening = self.rels;
-      if(!listening[packet.js.type])
-      {
-        // bounce error
-        if(!packet.js.end && !packet.js.err)
-        {
-          warn("bouncing unknown channel/type",packet.js);
-          var err = (packet.js.type) ? "unknown type" : "unknown channel"
-          from.send({js:{err:err,c:packet.js.c}});
-        }
-        return;
-      }
-      // make the correct kind of channel;
-      var kind = (listening == self.raws) ? "raw" : "start";
-      var chan = from[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
-      chan.receive(packet);
-    }
-
-    // forces full path reset
-    from.pathIn(path, true);
-
-    // if anyone was waiting for a trigger
-    if (from.onLine) {
-      from.onLine();
-      delete from.onLine;
+    // resend the last sent packet again
+    if (from.lastPacket) {
+      var packet = from.lastPacket;
+      delete from.lastPacket;
+      from.send(packet)
     }
     return;
 	}
@@ -444,7 +399,6 @@ function receive(msg, path)
 		// decrypt and process
 	  local.delineize(packet);
 		if(!packet.lineok) return debug("couldn't decrypt line",packet.sender);
-    line.alive(true);
     line.receive(packet);
     return;
 	}
@@ -452,6 +406,7 @@ function receive(msg, path)
   if(Object.keys(packet.js).length > 0) warn("dropping incoming packet of unknown type", packet.js, packet.sender);
 }
 
+// this creates a hashname identity object (or returns existing)
 function whois(hashname)
 {
   var self = this;
@@ -466,23 +421,14 @@ function whois(hashname)
 
   var hn = self.all[hashname];
 	if(hn) return hn;
+  
+  // make a new one
   hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:{}, isAlive:0};
   hn.at = Date.now();
 
   // to create a new channels to this hashname
   hn.start = channel;
   hn.raw = raw;
-
-  // set/update path priority/default
-  hn.pathSet = function(path, priority)
-  {
-    // if valid new priority, update it
-    if(typeof priority == "number") path.priority = priority;
-    // if higher/better path, change default
-    if(!hn.path || hn.path.priority <= path.priority) hn.path = path;
-    // always update ipv4 address for see responses
-    if(hn.path.type == "ipv4") hn.address = [hn.hashname, hn.path.ip, hn.path.port].join(",");
-  }
 
   // manage network information consistently, called on all validated incoming packets
   hn.pathIn = function(path, isOpen)
@@ -493,12 +439,6 @@ function whois(hashname)
       path.type = "ipv4";
       path.id = path.ip+":"+path.port;
     }
-
-    // reset all network info on any open
-    if(isOpen) {
-      hn.paths = {};
-      hn.path = path;
-    }    
 
     // just use existing path entry
     if(hn.paths[path.id])
@@ -511,20 +451,51 @@ function whois(hashname)
       if(Object.keys(hn.paths).length > 1 || path.type == "relay") hn.sync();
     }
     
+    // track last timestamp
+    path.lastIn = Date.now();
+    
     // always update to minimum 0 here
     if(typeof path.priority != "number" || path.priority < 0) path.priority = 0;
 
-    // possibly update the default outgoing
-    hn.pathSet(path);
-
     return path;
   }
+  
+  // get the best path out
+  hn.pathOut = function()
+  {
+    var best;
+    Object.keys(hn.paths).forEach(function(id){
+      var path = hn.paths[id];
+      if(!best) best = path;
+      if(best.priority == path.priority && best.lastAt < path.lastAt) best = path;
+      if(best.priority < path.priority) best = path;
+    });
+    return best;
+  }
 
-  // internal, trying to send on a line needs to create it first
-  // this function gets replaced as soon as there's a line created
-  function firstsend(packet){
-    // try to re-send the packet as soon as there's a line
-    hn.onLine = function(){ hn.send(packet) }
+  // try to send a packet to a hashname, doing whatever is possible/necessary
+  hn.send = function(packet){
+    /*
+  	get best path if none
+  	validate path, if fail ADD another, loop
+  		received within 5sec of last sent
+  	if paths and line, try sending
+  	done if at least one valid path
+  	set .lastpacket
+  	call hn.open
+  	call self.seek
+    ping any vias
+    */
+
+    var paths = [];
+    if(packet.to)
+
+    var to = packet.to||from.path;
+    if(!to) return warn("dropping packet, no network info for recipient",from.hashname);
+    debug("line sending",from.hashname, to.id, packet.js);
+    var lined = local.lineize(from, packet);
+    from.sentAt = Date.now();
+    self.send(to, lined);
 
     // if any pub key and network, try that
     if(hn.der && hn.path) return hn.open();
@@ -565,23 +536,43 @@ function whois(hashname)
       hn.send(packet);
     });
   }
-  hn.send = firstsend;
-  
-  // called whenever there's some signal the line is working or not
-  hn.alive = function(good)
-  {
-    if(!hn.lineOut) return;
-    if(good) return hn.isAlive = 1;
-    hn.isAlive--;
-    if(hn.isAlive >= 0) return;
-    debug("alive fail",hn.hashname,hn.isAlive,hn.path);
-    // at thresholds, try a sync and failing that, try a new open
-    if(hn.path && hn.isAlive % 2 == 0) hn.sync(function(err){
-      debug("alive sync",err);
-      if(err) hn.open();
-    });
-  }
 
+  // handle all incoming line packets
+    from.receive = function(packet)
+    {
+//      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
+      if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
+
+      debug("LINEIN",JSON.stringify(packet.js));
+      from.recvAt = Date.now();
+      // normalize/track sender network path
+      packet.sender = from.pathIn(packet.sender);
+
+      // find any existing channel
+      var chan = from.chans[packet.js.c];
+      if(chan) return chan.receive(packet);
+
+      // start a channel if one doesn't exist, check either reliable or unreliable types
+      var listening = {};
+      if(typeof packet.js.seq == "undefined") listening = self.raws;
+      if(packet.js.seq === 0) listening = self.rels;
+      if(!listening[packet.js.type])
+      {
+        // bounce error
+        if(!packet.js.end && !packet.js.err)
+        {
+          warn("bouncing unknown channel/type",packet.js);
+          var err = (packet.js.type) ? "unknown type" : "unknown channel"
+          from.send({js:{err:err,c:packet.js.c}});
+        }
+        return;
+      }
+      // make the correct kind of channel;
+      var kind = (listening == self.raws) ? "raw" : "start";
+      var chan = from[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
+      chan.receive(packet);
+    }
+  
   // track who told us about this hn
   hn.via = function(from, address)
   {
@@ -635,6 +626,7 @@ function whois(hashname)
   // force send an open packet, direct overrides the network
   hn.open = function(direct)
   {
+    if(!hn.der) return; // can't open if no key
     // don't send again if we've sent one in the last few sec, prevents connect abuse
     if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;
     hn.sentOpen = Date.now();
@@ -654,41 +646,27 @@ function whois(hashname)
   // send a full network path sync, callback(true||false) if err (no networks)
   hn.sync = function(callback)
   {
-    function done()
-    {
-      // TODO definitely need to rethink/refactor line ending state
-      if(callback) callback(hn.path.priority < 0);
-      if(hn.path.priority >= -2) return debug("sync done highest priority",hn.path.priority);
-      debug("failing the line, no paths valid",hn.lineOut,hn.hashname);
-      delete hn.path;
-      if(hn.lineOut) delete self.lines[hn.lineOut];
-      delete hn.lineOut;
-      delete hn.sentOpen;
-      delete hn.lineIn;
-      hn.send = firstsend;
-    }
-
+    if(!callback) callback = function(){};
     debug("syncing",hn.hashname,hn.paths);
     var refcnt = Object.keys(hn.paths).length;
 
     // empty. fail the line and reset the hn
-    if(refcnt == 0) return done();
+    if(refcnt == 0) return callback();
 
     // check all paths at once
     Object.keys(hn.paths).forEach(function(id){
       var path = hn.paths[id];
       var js = {};
+      // our outgoing priority of this path
       js.priority = (path.type == "ipv4") ? 1 : 0;
       // include local ip/port if we're relaying to them
       if(hn.relay && path.type == "relay") js.alts = [{type:"ipv4", ip:self.ip, port:self.port}];
       hn.raw("path",{js:js, timeout:3000}, function(err, packet){
-        // when it actually errored, negate/decrement priority
-        if(err && err !== true) hn.pathSet(path, (path.priority<0)?(path.priority - 1):-1);
+        // when it actually errored, lower priority
+        if(err && err !== true) path.priority = -1;
         else inPath(true, packet); // handles any response .priority and .alts
-        // if it's failed thrice, delist
-        if(path.priority < -2) delete hn.paths[id];
-        // processed all paths
-        if((--refcnt) == 0) done();
+        // processed all paths, done
+        if((--refcnt) == 0) callback();
       });
     });
   }
@@ -702,6 +680,9 @@ function seek(hn, callback)
   var self = this;
   if(typeof hn == "string") hn = self.whois(hn);
   if(hn.lineOut || hn === self) return callback();
+  if(hn.seekAt && Date.now() - hn.seekAt < 5000) return debug("ignoring seek, too rapid",hn.hashname);
+  hn.seekAt = Date.now();
+
   var done = false;
   var did = {};
   var doing = {};
@@ -784,7 +765,6 @@ function raw(type, arg, callback)
     chan.timer = setTimeout(function(){
       if(!hn.chans[chan.id]) return; // already gone
       delete hn.chans[chan.id];
-      hn.alive(false);
       callback("timeout",{js:{err:"timeout"}},chan);
     }, chan.timeout);
   }
@@ -972,7 +952,6 @@ function channel(type, arg, callback)
     if(chan.ended) return;
     if(!chan.outq.length) return;
     var lastpacket = chan.outq[chan.outq.length-1];
-    hn.alive(false);
     // timeout force-end the channel
     if(Date.now() - lastpacket.sentAt > chan.timeout)
     {
