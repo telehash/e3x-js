@@ -52,6 +52,7 @@ exports.hashname = function(key, send, args)
   // outgoing packets to the network
 	self.send = function(to, msg){
     if(!to) return warn("send called w/ no network, dropping");
+    to.lastOut = Date.now();
     // a relay network must be resolved to the channel and wrapped/sent that way
     if(to.type == "relay")
     {
@@ -475,34 +476,54 @@ function whois(hashname)
 
   // try to send a packet to a hashname, doing whatever is possible/necessary
   hn.send = function(packet){
-    /*
-  	get best path if none
-  	validate path, if fail ADD another, loop
-  		received within 5sec of last sent
-  	if paths and line, try sending
-  	done if at least one valid path
-  	set .lastpacket
-  	call hn.open
-  	call self.seek
-    ping any vias
-    */
-
-    var paths = [];
-    if(packet.to)
-
-    var to = packet.to||from.path;
-    if(!to) return warn("dropping packet, no network info for recipient",from.hashname);
-    debug("line sending",from.hashname, to.id, packet.js);
-    var lined = local.lineize(from, packet);
-    from.sentAt = Date.now();
-    self.send(to, lined);
-
-    // if any pub key and network, try that
-    if(hn.der && hn.path) return hn.open();
-
-    // if any via information, try them all! (usually only one)
-    if(hn.vias)
+    // if there's a line, try sending it!
+    if(hn.lineIn)
     {
+      debug("line sending",hn.hashname);
+      var lined = local.lineize(hn, packet);
+      hn.sentAt = Date.now();
+
+      // validate if a network path is acceptable to stop at
+      function validate(path)
+      {
+        if(!path.lastIn || !path.lastOut) return false; // haven't received/sent (shouldn't be possible)
+        if(path.lastIn > path.lastOut) return true; // received any newer than sent, good
+        if((path.lastOut - path.lastIn) < 5000) return true; // received within 5sec of last sent
+        return false; // there are cases where it's still valid, but it's always safer to assume otherwise
+      }
+
+      // if a direct path, always try that one
+      if(packet.to)
+      {
+        var valid = validate(packet.to); // validate first since it uses .lastOut which .send updates
+        self.send(packet.to, lined);
+        if(valid) return; // done!
+      }
+
+      // sort all possible paths by priority and recency
+      var paths = Object.keys(hn.paths).sort(function(a,b){
+        a = hn.paths[a]; b = hn.paths[b];
+        if(a.priority == b.priority) return b.lastIn - a.lastIn;
+        return b.priority - a.priority;
+      });
+      
+      // try them in order until there's a valid one
+      for(var i = 0; i < paths.length; i++)
+      {
+        var valid = validate(paths[i]);
+        self.send(paths[i], lined);
+        if(valid) return; // any valid path means we're done!
+      }
+    }
+
+    // we've fallen through, either no line, or no valid paths
+    hn.lastpacket = packet; // will be resent if/when an open is received
+    hn.open(); // always try an open again
+    // kick off another seek and process any vias
+    self.seek(hn, function(err){
+      if(!hn.vias) return; // seek failed
+      if(!hn.lastpacket) return; // packet was already sent
+      // try to connect vias
       Object.keys(hn.vias).forEach(function(via){
         var address = hn.vias[via].split(",");
         if(address.length == 3)
@@ -511,67 +532,51 @@ function whois(hashname)
           var to = {type:"ipv4",ip:address[1],port:parseInt(address[2])};
           self.send(to,local.pencode());
           // if possibly behind the same NAT, set flag to allow/ask for a relay
-          if(self.nat && address[1]) hn.relay = true;
+          if(self.nat && address[1] == self.pubip) hn.relay = true;
         }
         self.whois(via).peer(hn.hashname, hn.relay); // send the peer request
       });
-      // so next time it'll re-seek
+      // never use more than once
       delete hn.vias;
-      delete packet.seeked;
-      return;
-    }
-
-    // need to find new/updated connectivity info
-    if(packet.seeked) return; // don't try to seek more than once
-    packet.seeked = true;
-    self.seek(hn, function(err){
-      if(err)
-      {
-        Object.keys(hn.chans).forEach(function(cid){
-          hn.chans[cid].fail({js:{err:err}});
-        });
-        return;
-      }
-      // recurse back into ourselves to try connecting
-      hn.send(packet);
     });
+
   }
 
   // handle all incoming line packets
-    from.receive = function(packet)
+  hn.receive = function(packet)
+  {
+//    if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
+    if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
+
+    debug("LINEIN",JSON.stringify(packet.js));
+    hn.recvAt = Date.now();
+    // normalize/track sender network path
+    packet.sender = hn.pathIn(packet.sender);
+
+    // find any existing channel
+    var chan = hn.chans[packet.js.c];
+    if(chan) return chan.receive(packet);
+
+    // start a channel if one doesn't exist, check either reliable or unreliable types
+    var listening = {};
+    if(typeof packet.js.seq == "undefined") listening = self.raws;
+    if(packet.js.seq === 0) listening = self.rels;
+    if(!listening[packet.js.type])
     {
-//      if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
-      if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
-
-      debug("LINEIN",JSON.stringify(packet.js));
-      from.recvAt = Date.now();
-      // normalize/track sender network path
-      packet.sender = from.pathIn(packet.sender);
-
-      // find any existing channel
-      var chan = from.chans[packet.js.c];
-      if(chan) return chan.receive(packet);
-
-      // start a channel if one doesn't exist, check either reliable or unreliable types
-      var listening = {};
-      if(typeof packet.js.seq == "undefined") listening = self.raws;
-      if(packet.js.seq === 0) listening = self.rels;
-      if(!listening[packet.js.type])
+      // bounce error
+      if(!packet.js.end && !packet.js.err)
       {
-        // bounce error
-        if(!packet.js.end && !packet.js.err)
-        {
-          warn("bouncing unknown channel/type",packet.js);
-          var err = (packet.js.type) ? "unknown type" : "unknown channel"
-          from.send({js:{err:err,c:packet.js.c}});
-        }
-        return;
+        warn("bouncing unknown channel/type",packet.js);
+        var err = (packet.js.type) ? "unknown type" : "unknown channel"
+        hn.send({js:{err:err,c:packet.js.c}});
       }
-      // make the correct kind of channel;
-      var kind = (listening == self.raws) ? "raw" : "start";
-      var chan = from[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
-      chan.receive(packet);
+      return;
     }
+    // make the correct kind of channel;
+    var kind = (listening == self.raws) ? "raw" : "start";
+    var chan = hn[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
+    chan.receive(packet);
+  }
   
   // track who told us about this hn
   hn.via = function(from, address)
@@ -627,20 +632,29 @@ function whois(hashname)
   hn.open = function(direct)
   {
     if(!hn.der) return; // can't open if no key
+    if(!direct && Object.keys(hn.paths).length == 0) return debug("can't open, no path");
     // don't send again if we've sent one in the last few sec, prevents connect abuse
     if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;
     hn.sentOpen = Date.now();
 
+    // generate just one open packet, so recipient can dedup easily if they get multiple
     var open = local.openize(self, hn);
-    var to = direct||hn.path;
-    if(!to) return debug("can't open, no network path",hn.hashname);
-    self.send(to, open);
-    // if a relay is requested, open to that too
-    if(to.relay)
-    {
-      var relay = self.whois(to.relay);
-      relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
+
+    // send directly if instructed
+    if(direct){
+      self.send(direct, open);
+      // if a relay is requested, open to that too
+      if(to.relay)
+      {
+        var relay = self.whois(to.relay);
+        relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
+      }
     }
+
+    // always send to all known paths also, increase resiliency
+    Object.keys(hn.paths).forEach(function(id){
+      self.send(hn.paths[id], open);
+    });
   }
   
   // send a full network path sync, callback(true||false) if err (no networks)
