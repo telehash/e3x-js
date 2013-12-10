@@ -535,8 +535,10 @@ function whois(hashname)
       if(!hn.vias) return;
       hn.sentOpen = false; // whenever we send a peer, we'll always need to resend any open regardless
       // try to connect vias
-      Object.keys(hn.vias).forEach(function(via){
-        var address = hn.vias[via].split(",");
+      var todo = hn.vias;
+      delete hn.vias; // never use more than once
+      Object.keys(todo).forEach(function(via){
+        var address = todo[via].split(",");
         if(address.length == 3 && address[1].split(".").length == 4 && parseInt(address[2]) > 0)
         {
           // NAT hole punching
@@ -547,8 +549,6 @@ function whois(hashname)
         }
         self.whois(via).peer(hn.hashname, hn.relay); // send the peer request
       });
-      // never use more than once
-      delete hn.vias;      
     }
     
     // if there's via information, just try that
