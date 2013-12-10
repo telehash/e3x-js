@@ -624,6 +624,7 @@ function whois(hashname)
       hn.raw("seek", {js:{"seek":hashname}}, function(err, packet, chan){
         if(tries > 3) return; // already failed back
         clearTimeout(timer);
+        tries = 4; // prevent multiple callbacks
         callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
       });
     }
