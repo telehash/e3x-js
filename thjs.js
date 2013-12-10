@@ -83,11 +83,13 @@ exports.hashname = function(key, send, args)
 
   // handle new reliable channels coming in from anyone
   self.listen = function(type, callback){
+    if(typeof type != "string" || typeof callback != "function") return warn("invalid arguments to listen");
     if(type.substr(0,1) !== "_") type = "_"+type;
     self.rels[type] = callback;
   };
   // advanced usage only
   self.raw = function(type, callback){
+    if(typeof type != "string" || typeof callback != "function") return warn("invalid arguments to raw");
     self.raws[type] = callback;
   };
   
@@ -175,7 +177,7 @@ exports.channelWraps = {
 function meshLoop(self)
 {
   debug("MESHA")
-  meshReap(self); // remove any dead ones
+//  meshReap(self); // remove any dead ones, temporarily disabled due to node crypto compiled cleanup bug
   meshElect(self); // which ones go into buckets
   meshPing(self); // ping all of them
   debug("MESHZ")
@@ -258,7 +260,7 @@ function meshPing(self)
           var sug = self.whois(address);
           if(!sug) return;
           sug.via(to, address);
-          if(sug.bucket) return; // already bucketized
+          if(sug === self || sug.bucket) return; // already bucketized
           // if their bucket has capacity, ping them
           sug.bucket = dhash(self.hashname, hn.hashname);
           if(self.capacity[sug.bucket]-- >= 0) ping(sug);
@@ -797,7 +799,6 @@ function raw(type, arg, callback)
     // if err'd or ended, delete ourselves
     if(packet.js.err || packet.js.end) delete hn.chans[chan.id];
     chan.last = packet.sender; // cache last received network
-    if(typeof chan.callback != "function") warn("channel missing callback",typeof chan, typeof chan.callback, chan.id, chan.type,JSON.stringify(packet.js));
     chan.callback(packet.js.err||packet.js.end, packet, chan);
     timer();
   }
