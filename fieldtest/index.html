@@ -273,8 +273,8 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                     {
                       var hn = me.whois(arg[0]);
                       if(!hn) return log("invalid hashname",arg[0]);
-                      hn.seekping(function(err){
-                        if(err) return log("ping failed",hn.hashname,err);
+                      hn.seek(me.hashname,function(err){
+                        if(err && err !== true) return log("ping failed",hn.hashname,err);
                         log("ping",hn.address);
                       });
                     }
