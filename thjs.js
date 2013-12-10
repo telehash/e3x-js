@@ -550,9 +550,12 @@ function whois(hashname)
       // never use more than once
       delete hn.vias;      
     }
-    vias();
+    
+    // if there's via information, just try that
+    if(hn.vias) return vias();
+    
 
-    // never too fast, try to seek again
+    // never too fast, worst case is to try to seek again
     if(!hn.sendSeek || (Date.now() - hn.sendSeek) > 5000)
     {
       hn.sendSeek = Date.now();
