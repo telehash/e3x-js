@@ -36,7 +36,7 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], lines:{}, all:{}, buckets:[], rels:{}, raws:{}};
+  var self = {seeds:[], lines:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
@@ -263,6 +263,7 @@ function meshPing(self)
           if(sug === self || sug.bucket) return; // already bucketized
           // if their bucket has capacity, ping them
           sug.bucket = dhash(self.hashname, hn.hashname);
+          if(self.capacity[sug.bucket] === undefined) self.capacity[sug.bucket] = 3; // safe default for a new bucket
           if(self.capacity[sug.bucket]-- >= 0) ping(sug);
         });
       });
