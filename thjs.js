@@ -36,7 +36,7 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], lines:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}};
+  var self = {seeds:[], locals:[], lines:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
@@ -319,6 +319,9 @@ function myVia(from, address)
 function online(callback)
 {
 	var self = this;
+  // ping lan
+  self.lanToken = local.randomHEX(16);
+  self.send({type:"ipv4", lan:true, ip:"255.255.255.255", port:42424}, local.pencode({type:"lan",lan:self.lanToken}));
   // safely callback only once or when all seeds failed
   function done(err)
   {
@@ -358,13 +361,17 @@ function receive(msg, path)
   var packet = local.pdecode(msg);
   if(!packet) return warn("failed to decode a packet from", path, msg.toString());
   if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
-  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", path);
-
-//  if(path.port && path.port !== 42424) return debug("TEST DROP");
+  
   packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
   debug("in",(typeof msg.length == "function")?msg.length():msg.length,path.ip,path.port, packet.js.type, packet.body && packet.body.length);
+
+  // handle any LAN notifications
+  if(path.lan) return inLan(self, packet);
+  if(packet.js.type == "lan") return inLanSeed(self, packet);
+
+  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", path);
 
   // either it's an open
   if(packet.js.type == "open")
@@ -407,6 +414,9 @@ function receive(msg, path)
       delete from.lastPacket;
       from.send(packet)
     }
+    
+    // if it was a lan seed, add them
+    if(from.local && self.locals.indexOf(from) == -1) self.locals.push(from);
 
     return;
 	}
@@ -743,22 +753,22 @@ function seek(hn, callback)
   sort();
 
   // main loop, multiples of these running at the same time
-  function loop(){
+  function loop(onetime){
     if(isDone) return;
     debug("SEEK LOOP",queue);
     // if nothing left to do and nobody's doing anything, failed :(
     if(Object.keys(doing).length == 0 && queue.length == 0) return done("failed to find the hashname");
     
     // get the next one to ask
-    var mine = queue.shift();
+    var mine = onetime||queue.shift();
     if(!mine) return; // another loop() is still running
 
     // if we found it, yay! :)
     if(mine == hn.hashname) return done();
     // skip dups
-    if(did[mine] || doing[mine]) return loop();
+    if(did[mine] || doing[mine]) return onetime||loop();
     var distance = dhash(hn.hashname, mine);
-    if(distance > closest) return loop(); // don't "back up" further away
+    if(distance > closest) return onetime||loop(); // don't "back up" further away
     if(!self.seeds[mine]) closest = distance; // update distance if not talking to a seed
     doing[mine] = true;
     var to = self.whois(mine);
@@ -773,12 +783,15 @@ function seek(hn, callback)
       sort();
       did[mine] = true;
       delete doing[mine];
-      loop();
+      onetime||loop();
     });
   }
   
   // start three of them
   loop();loop();loop();
+  
+  // also force query any locals
+  self.locals.forEach(function(local){loop(local.hashname)});
 }
 
 // create an unreliable channel
@@ -1229,6 +1242,27 @@ function inPath(err, packet, chan)
   // need to respond, prioritize everything above relay
   var priority = (packet.sender.type == "relay") ? 0 : 1;
   chan.send({js:{end:true, priority:priority}});
+}
+
+// packets coming in from the LAN broadcast receiver
+function inLan(self, packet)
+{
+  if(packet.js.lan == self.lanToken) return; // ignore ourselves
+  self.send(packet.sender, local.pencode(packet.js, self.der));
+}
+
+// answers from any LAN broadcast notice we sent
+function inLanSeed(self, packet)
+{
+  if(packet.js.lan != self.lanToken) return debug("invalid lan token received")
+  if(self.locals.length >= 5) return warn("locals full");
+  if(!packet.body) return;
+  var der = local.der2der(packet.body);
+  var to = self.whois(local.der2hn(der));
+  if(!to || to === self) return warn("invalid lan request from",packet.sender);
+  to.der = der;
+  to.local = true;
+  to.open(packet.sender);
 }
 
 // utility functions
