@@ -22,18 +22,19 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
             .system-message { font-style: italic; }
 
         </style>
-        <script src="/fieldtest/jquery.min.js"></script>
-        <script src="/fieldtest/jquery.tmpl.min.js"></script>
-        <script src="/includes/forge.min.js"></script>
-        <script src="/includes/jsbn.js"></script>
-        <script src="/includes/jsbn2.js"></script>
-        <script src="/includes/ec.js"></script>
-        <script src="/includes/sec.js"></script>
-        <script src="/includes/prng4.js"></script>
-        <script src="/includes/rng.js"></script>
-      	<script src="/thjs.js"></script>
-      	<script src="/thforge.js"></script>
-        <script src="/socket.io/socket.io.js"></script>
+        <script src="jquery.min.js"></script>
+        <script src="jquery.tmpl.min.js"></script>
+        <script src="../includes/forge.min.js"></script>
+        <script src="../includes/jsbn.js"></script>
+        <script src="../includes/jsbn2.js"></script>
+        <script src="../includes/ec.js"></script>
+        <script src="../includes/sec.js"></script>
+        <script src="../includes/prng4.js"></script>
+        <script src="../includes/rng.js"></script>
+      	<script src="../thjs.js"></script>
+      	<script src="../thforge.js"></script>
+      	<script src="../seeds.js"></script>
+        <script src="socket.io.js"></script>
         <script>
         thforge.forge(forge);
         thjs.debug(function(){console.log.apply(console,arguments)});
@@ -43,10 +44,8 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         	{
         		var ret = {nick:localStorage.nick, public:localStorage.pubkey, private:localStorage.prikey};
         		console.log("returning key",ret);
-           return $.getJSON("/seeds.json", function(seeds) {
-              ret.seeds = seeds||[];
-          		 callback(ret);
-            });
+            ret.seeds = seeds;
+            return callback(ret);
         	}
 
         	// generate/save one nicely
@@ -91,16 +90,21 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         <script>
 
             $(document).ready(function() {
-
+              console.log("READY")
               var me;
               getId(function(id){
-          	    var socket = io.connect("//localhost:8008");
-                console.log(socket);
-          	    socket.on('connected', function(data) {
-          	    	console.log("Socket connected",data);
+          	    var sockets = {};
+                console.log("STARTING")
           	    	me = thjs.hashname(id, function(to, msg) {
+                    if(to.type != "http") return console.log("dropping ",to.type);
                     console.log("sending", to.hashname, msg.length());
-                    socket.emit("message", {ip: to.ip, port: to.port, message: forge.util.encode64(msg.bytes())});
+                    if(!sockets[to.id]){
+                      sockets[to.id] = io.connect(to.id);
+                      sockets[to.id].on("packet", function(packet){
+                	    	me.receive(forge.util.decode64(packet.data), to);                        
+                      });
+                    }
+                    sockets[to.id].emit("packet", {data: forge.util.encode64(msg.bytes())});
                   });
           	    	console.log("switch created",me);
           				id.seeds.forEach(me.addSeed, me);
@@ -318,18 +322,6 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                           else log("I don't know how to "+cmd);
                       });
           				});
-          	    });
-
-          	    socket.on("message", function(data) {
-          	    	console.log("incoming", data.message.length);
-          	    	me.receive(forge.util.decode64(data.message), data.from);
-          	    });
-
-          	    socket.on("local", function(data) {
-          	    	console.log("local address update", data);
-                  me.ip = data.ip;
-                  me.port = data.port;
-          	    });
                 
               });
                 

@@ -119,9 +119,10 @@ function openize(id, to)
 {
 	if(!to.ecc) to.ecc = ecKey();
 	if(!to.lineOut) to.lineOut = randomHEX(16);
+  if(!to.lineAt) to.lineAt = Date.now();
   if(!to.public) to.public = der2key(to.der);
 	var inner = {}
-	inner.at = Date.now();
+	inner.at = to.lineAt; // always the same for the generated line id/key
 	inner.to = to.hashname;
 	inner.line = to.lineOut;
 	var body = pencode(inner, id.der);

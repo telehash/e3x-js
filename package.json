@@ -2,7 +2,7 @@
 	"name": "thjs",
   "description": "An implementation of telehash in pure javascript that works in the browser.",
   "homepage": "https://github.com/telehash/thjs",
-	"version": "0.0.21",
+	"version": "0.0.22",
   "keywords": [
     "telehash",
     "crypto",
@@ -19,11 +19,8 @@
     "type": "git",
     "url": "https://github.com/telehash/thjs.git"
   },
-	"devDependencies": {
-		"socket.io": "*"
-	},
   "scripts": {
-    "start":"cd nodesocket && node socketd.js",
+    "seeds":"echo 'var seeds = \\c' > seeds.js && cat seeds.json >> seeds.js",
     "chrome":"mkdir -p chrome/includes && cp includes/* chrome/includes/ && cp *.js chrome/ && cp seeds.json chrome/"
   },
   "licenses": [

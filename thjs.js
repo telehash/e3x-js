@@ -40,7 +40,7 @@ exports.hashname = function(key, send, args)
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
-  self.hashname = local.der2hn(self.der);
+  self.address = self.hashname = local.der2hn(self.der);
   self.nat = true;
   if(args.family) self.family = args.family;
   if(args.ip) self.ip = args.ip;
@@ -286,6 +286,10 @@ function addSeed(arg) {
     if(!seed.paths[id]) seed.paths[id] = {id:id, type:"ipv4", ip:arg.ip, port:arg.port, priority:0};    
     seed.address = [seed.hashname,arg.ip,arg.port].join(","); // given ip:port should always be the most valid
   }
+  if(arg.http)
+  {
+    if(!seed.paths[arg.http]) seed.paths[arg.http] = {id:arg.http, type:"http",priority:-1};
+  }
   seed.isSeed = true;
   self.seeds.push(seed);
 }
@@ -296,7 +300,7 @@ function myVia(from, address)
   if(typeof address != "string") return warn("invalid see address",address);
   var self = this;
   var parts = address.split(",");
-  if(parts.length != 3 || parts[1].split(".").length != 4 || !(parseInt(parts[2]) > 0)) return debug("skipping incomplete address");
+  if(parts.length != 3 || parts[1].split(".").length != 4 || !(parseInt(parts[2]) > 0)) return;
   if(parts[0] !== self.hashname) return;
   // if it's a seed (trusted) update our known public IP/Port
   if(from.isSeed || !self.pubip || self.pubip == "127.0.0.1")
@@ -547,6 +551,8 @@ function whois(hashname)
           self.send(to,local.pencode());
           // if possibly behind the same NAT, set flag to allow/ask for a relay
           if(self.nat && address[1] == self.pubip) hn.relay = true;
+        }else{ // no ip address, must relay
+          hn.relay = true;
         }
         self.whois(via).peer(hn.hashname, hn.relay); // send the peer request
       });
@@ -654,19 +660,20 @@ function whois(hashname)
 
     // send directly if instructed
     if(direct){
-      self.send(direct, open);
-      // if a relay is requested, open to that too
-      if(direct.relay)
+      if(direct.type == "relay")
       {
-        var relay = self.whois(direct.relay);
+        var relay = self.whois(direct.via);
         relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
+      }else{
+        self.send(direct, open);        
       }
+    }else{
+      // always send to all known paths, increase resiliency
+      Object.keys(hn.paths).forEach(function(id){
+        self.send(hn.paths[id], open);
+      });      
     }
 
-    // always send to all known paths also, increase resiliency
-    Object.keys(hn.paths).forEach(function(id){
-      self.send(hn.paths[id], open);
-    });
   }
   
   // send a full network path sync, callback(true||false) if err (no networks)
@@ -1071,17 +1078,21 @@ function inConnect(err, packet, chan)
   if(!packet.body) return;
   var der = local.der2der(packet.body);
   var to = packet.from.self.whois(local.der2hn(der));
-  if(!to || !packet.js.ip || typeof packet.js.port != 'number') return warn("invalid connect request from",packet.from.address,packet.js);
+  if(!to) return warn("invalid connect request from",packet.from.address,packet.js);
   to.der = der;
 
-  // create the suggested network path
-  var path = {type:"ipv4",ip:packet.js.ip,port:packet.js.port};
+  // try the suggested ip info
+  if(typeof packet.js.ip == "string" && typeof packet.js.port == "number")
+  {
+    var path = {ip:packet.js.ip,port:packet.js.port};
+    path.type = (path.ip.indexOf(":") > 0) ? "ipv6" : "ipv4";
+    to.open(path);
+  }
+  
+  // TODO try any .alts
 
-  // if relay is requested, flag that
-  if(packet.js.relay === true) path.relay = packet.from.hashname;
-
-  // always send the open to the requested network path
-  to.open(path);
+  // if relay is requested, try that
+  if(packet.js.relay === true) to.open({type:"relay",via:packet.from.hashname});
 }
 
 // be the middleman to help NAT hole punch
@@ -1092,7 +1103,15 @@ function inPeer(err, packet, chan)
   var peer = packet.from.self.whois(packet.js.peer);
   if(!peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
   // send a single lossy packet
-  var js = {type:"connect", end:true, ip:packet.sender.ip, port:packet.sender.port, c:local.randomHEX(16)};
+  var js = {type:"connect", end:true, c:local.randomHEX(16)};
+  // set any IP values based on the sender
+  if(packet.sender.type == "ipv4" || packet.sender.type == "ipv6"){
+    js.ip = packet.sender.ip;
+    js.port = packet.sender.port;
+  }else{
+    js.relay = true; // if no ip information, we must relay    
+  }
+  // TODO copy .alts
   if(packet.js.relay === true) js.relay = true; // pass through relay flag
   peer.send({js:js, body:packet.from.der});
 }
