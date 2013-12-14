@@ -19,7 +19,7 @@ function poll()
     console.log("message",msg);
     if (msg.resultCode >= 0) {
       console.log("udp recv",msg.address,msg.port,msg.data.byteLength);
-      if(sock.receive) sock.receive(ab2str(msg.data),{ip:msg.address,port:msg.port});
+      if(sock.receive) sock.receive(ab2str(msg.data),{type:"ipv4",ip:msg.address,port:msg.port});
       sock.poll();
     } else {
       //poof
@@ -38,6 +38,7 @@ udp.create = function(cb)
         sock.poll = poll;
         sock.poll();
         sock.send = function(to, msg){
+          if(to.type != "ipv4") return;
           console.log("udp send",to.ip,to.port,msg.length);
           chrome.socket.sendTo(sock.id, str2ab(msg), to.ip, parseInt(to.port), function(wi){
             console.log("sendTo",wi);
@@ -45,12 +46,13 @@ udp.create = function(cb)
         }
         // update the .ip and .port to local addresses
         sock.setLocal = function(obj){
-          obj.port = sock.localPort;
           // get the current ipv4 address from the local network interfaces
           chrome.socket.getNetworkList(function(local){
+            var ip = sock.localAddress;
             if(Array.isArray(local)) local.forEach(function(iface){
-              if(iface.address && iface.address.split(".").length == 4) obj.setIP(iface.address);
+              if(iface.address && iface.address.split(".").length == 4) ip = iface.address;
             });
+            obj.pathSet({type:"ipv4",ip:ip,port:sock.localPort});
           });          
         }
         cb(sock);
