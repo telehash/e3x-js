@@ -1319,6 +1319,7 @@ function inBridge(err, packet, chan)
 function inLan(self, packet)
 {
   if(packet.js.lan == self.lanToken) return; // ignore ourselves
+  delete packet.sender.lan;
   self.send(packet.sender, local.pencode(packet.js, self.der));
 }
 
@@ -1330,7 +1331,8 @@ function inLanSeed(self, packet)
   if(!packet.body || packet.body.length == 0) return;
   var der = local.der2der(packet.body);
   var to = self.whois(local.der2hn(der));
-  if(!to || to === self) return warn("invalid lan request from",packet.sender);
+  if(!to) return warn("invalid lan request from",packet.sender);
+  if(to === self) return;
   to.der = der;
   to.local = true;
   to.open(packet.sender);
