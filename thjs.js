@@ -341,7 +341,7 @@ function online(callback)
 	var self = this;
   // ping lan
   self.lanToken = local.randomHEX(16);
-  self.send({type:"lan", ip:self.ip, port:42424}, local.pencode({type:"lan",lan:self.lanToken}));
+  self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken}));
   // safely callback only once or when all seeds failed
   function done(err)
   {
@@ -1323,7 +1323,7 @@ function inLan(self, packet)
   self.lanSkip = self.lanToken;
   // announce ourself as the seed back
   packet.js.type = "seed";
-  self.send({type:"lan",ip:self.ip,port:42424}, local.pencode(packet.js, self.der));
+  self.send({type:"lan"}, local.pencode(packet.js, self.der));
 }
 
 // answers from any LAN broadcast notice we sent
