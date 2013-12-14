@@ -36,7 +36,7 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], locals:[], lines:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
@@ -80,7 +80,7 @@ exports.hashname = function(key, send, args)
   
   // connect to the network, online(callback(err))
   self.online = online;
-
+  
   // handle new reliable channels coming in from anyone
   self.listen = function(type, callback){
     if(typeof type != "string" || typeof callback != "function") return warn("invalid arguments to listen");
@@ -99,10 +99,12 @@ exports.hashname = function(key, send, args)
 	self.raws["seek"] = inSeek;
 	self.raws["relay"] = inRelay;
 	self.raws["path"] = inPath;
+	self.raws["bridge"] = inBridge;
 
   // primarily internal, to seek/connect to a hashname
   self.seek = seek;
   self.via = myVia;
+  self.bridge = bridge;
   
   // return array of closest known hashname objects
   self.nearby = nearby;
@@ -272,6 +274,24 @@ function meshPing(self)
   });
 }
 
+// try to create a bridge to them for the given path
+function bridge(to, path, callback)
+{
+  var self = this;
+  var found;
+  Object.keys(self.seeds).forEach(function(seed){
+    if(found) return;
+    seed = self.seeds[seed];
+    if(!seed.alive || !seed.bridging) return;
+    found = true;
+    seed.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
+      if(end !== true) debug("failed to create bridge",end,seed.hashname);
+      callback((end==true)?packet.sender:false);
+    });
+  });
+  if(!found) return callback();
+}
+
 function addSeed(arg) {
   var self = this;
   if(!arg.pubkey) return warn("invalid args to addSeed");
@@ -290,6 +310,7 @@ function addSeed(arg) {
   {
     if(!seed.paths[arg.http]) seed.paths[arg.http] = {id:arg.http, type:"http",priority:-1};
   }
+  if(arg.bridge) seed.bridging = true;
   seed.isSeed = true;
   self.seeds.push(seed);
 }
@@ -427,7 +448,12 @@ function receive(msg, path)
 	  var line = packet.from = self.lines[packet.js.line];
 
 	  // a matching line is required to decode the packet
-	  if(!line) return debug("unknown line received", packet.js.line, JSON.stringify(packet.sender));
+	  if(!line) {
+	    if(!self.bridges[packet.js.line]) return debug("unknown line received", packet.js.line, JSON.stringify(packet.sender));
+      debug("BRIDGE",JSON.stringify(self.bridges[packet.js.line]));
+      // flat out raw retransmit any bridge packets
+      return self.send(self.bridges[packet.js.line],msg);
+	  }
 
 		// decrypt and process
 	  local.delineize(packet);
@@ -465,7 +491,7 @@ function whois(hashname)
   hn.raw = raw;
 
   // manage network information consistently, called on all validated incoming packets
-  hn.pathIn = function(path, isOpen)
+  hn.pathIn = function(path)
   {
     // anything incoming means hn is alive
     hn.alive = true;
@@ -484,8 +510,10 @@ function whois(hashname)
     }else{
       // store a new path
       hn.paths[path.id] = path;
-      // when either multiple networks or only relay, trigger a sync (slightly delayed so other stuff can happen first)
-      if(Object.keys(hn.paths).length > 1 || path.type == "relay") setTimeout(hn.sync,1000);
+      // sync when a relay is added (slightly delayed so other stuff can happen first)
+      if(path.type == "relay") setTimeout(hn.sync,1000);
+      // when multiple networks trigger a sync
+      if(Object.keys(hn.paths).length > 1) hn.sync();
       // update address
       if(path.type == "ipv4") hn.address = [hn.hashname,path.ip,path.port].join(",");
     }
@@ -505,7 +533,7 @@ function whois(hashname)
     if(hn.lineIn)
     {
       debug("line sending",hn.hashname,hn.lineIn);
-      var lined = local.lineize(hn, packet);
+      var lined = packet.msg || local.lineize(hn, packet);
       
       // directed packets are a special case (path testing), dump and forget
       if(packet.direct) return self.send(packet.direct, lined);
@@ -560,7 +588,7 @@ function whois(hashname)
           var to = {type:"ipv4",ip:address[1],port:parseInt(address[2])};
           self.send(to,local.pencode());
           // if possibly behind the same NAT, set flag to allow/ask for a relay
-          if(self.nat && address[1] == self.pubip) hn.relay = true;
+          if(self.nat && address[1] == self.pubip) hn.relay = "local";
         }else{ // no ip address, must relay
           hn.relay = true;
         }
@@ -670,7 +698,7 @@ function whois(hashname)
 
     // send directly if instructed
     if(direct){
-      if(direct.type == "relay")
+      if(direct.type == "newrelay")
       {
         var relay = self.whois(direct.via);
         relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
@@ -691,19 +719,32 @@ function whois(hashname)
   {
     if(!callback) callback = function(){};
     debug("syncing",hn.hashname,Object.keys(hn.paths).join(","));
-    var refcnt = Object.keys(hn.paths).length;
+    var paths = Object.keys(hn.paths);
+
+    // check which types of paths we have to them
+    var types = {};
+    paths.forEach(function(id){
+      types[hn.paths[id].type] = true;
+    });
 
     // empty. fail the line and reset the hn
-    if(refcnt == 0) return callback();
+    if(paths.length == 0) return callback();
 
     // check all paths at once
-    Object.keys(hn.paths).forEach(function(id){
+    var refcnt = paths.length;
+    paths.forEach(function(id){
       var path = hn.paths[id];
       var js = {};
       // our outgoing priority of this path
       js.priority = (path.type == "ipv4") ? 1 : 0;
+      var alts = [];
+      // if no ipv4 path and we have one, signal that
+      if(!types.ipv4 && self.pubip) alts.push({type:"ipv4", ip:self.pubip, port:self.pubport});
+      // we support http path too
+      if(self.path_http) alts.push({type:"http",http:self.path_http});
       // include local ip/port if we're relaying to them
-      if(hn.relay && path.type == "relay") js.alts = [{type:"ipv4", ip:self.ip, port:self.port}];
+      if(hn.relay == "local" && self.ip) alts.push({type:"ipv4", ip:self.ip, port:self.port});
+      if(alts.length > 0) js.alts = alts;
       hn.raw("path",{js:js, timeout:3000, direct:path}, function(err, packet){
         // when it actually errored, lower priority
         if(err && err !== true) path.priority = -1;
@@ -816,7 +857,7 @@ function raw(type, arg, callback)
 
   chan.hashname = hn.hashname; // for convenience
 
-  debug("new unreliable channel",hn.hashname,chan.type);
+  debug("new unreliable channel",hn.hashname,chan.type,chan.id);
 
 	// process packets at a raw level, very little to do
 	chan.receive = function(packet)
@@ -867,7 +908,7 @@ function channel(type, arg, callback)
   chan.type = (type.substr(0,1) == "_") ? type : "_"+type;
   chan.hashname = hn.hashname; // for convenience
 
-  debug("new channel",hn.hashname,chan.type);
+  debug("new channel",hn.hashname,chan.type,chan.id);
 
   // used by app to change how it interfaces with the channel
   chan.wrap = function(wrap)
@@ -1105,7 +1146,7 @@ function inConnect(err, packet, chan)
   // TODO try any .alts
 
   // if relay is requested, try that
-  if(packet.js.relay === true) to.open({type:"relay",via:packet.from.hashname});
+  if(packet.js.relay === true) to.open({type:"newrelay",via:packet.from.hashname});
 }
 
 // be the middleman to help NAT hole punch
@@ -1145,7 +1186,7 @@ function inRelay(err, packet, chan)
 {
   if(err) return;
   var self = packet.from.self;
-  
+
   // see if this channel is set up to relay already
   if(!chan.pair)
   {
@@ -1230,18 +1271,48 @@ function inPath(err, packet, chan)
   // check/try any alternate paths
   if(Array.isArray(packet.js.alts)) packet.js.alts.forEach(function(path){
     if(path.type != "ipv4") return; // only supported for now
+    // if we don't have any ipv4 network, try to create a bridge
+    if(!packet.from.self.ip) return packet.from.self.bridge(packet.from, path, function(pathin){
+      if(!pathin) return;
+      // experimentally send direct via the bridge path now
+      debug("BRIDGING",packet.from.hashname,pathin);
+      packet.from.raw("path",{js:{priority:0},direct:pathin}, inPath);
+    });
     path.id = path.ip + ":" + path.port;
     if(packet.from.paths[path.id]) return;
     // a new one, experimentally send it a path
     packet.from.raw("path",{js:{priority:1},direct:path}, inPath);
   });
   // update any optional priority information
-  if(typeof packet.js.priority == "number") packet.from.priority = packet.js.priority;
+  if(typeof packet.js.priority == "number") packet.sender.priority = packet.js.priority;
   if(err) return; // bye bye bye!
   
   // need to respond, prioritize everything above relay
   var priority = (packet.sender.type == "relay") ? 0 : 1;
   chan.send({js:{end:true, priority:priority}});
+}
+
+// handle any bridge requests, if allowed
+function inBridge(err, packet, chan)
+{
+  var self = packet.from.self;
+
+  // ensure valid request
+  if(!isHEX(packet.js.to,32) || !isHEX(packet.js.from,32) || typeof packet.js.path != "object") return warn("invalid bridge request",JSON.stringify(packet.js),packet.from.hashname);
+
+  // must be allowed either globally or per hashname
+  if(!self.bridging && !packet.from.bridging) return chan.send({js:{err:"not allowed"}});
+
+  if(!packet.from.bridges) packet.from.bridges = {};
+  packet.from.bridges[packet.js.to] = packet.from.bridges[packet.js.from] = true; // so we can clean up entries at some point
+
+  // set up the actual bridge paths
+  debug("BRIDGEUP",JSON.stringify(packet.js));
+  self.bridges[packet.js.to] = packet.js.path;
+  self.bridges[packet.js.from] = packet.sender;
+  self.bridges[packet.js.to].via = self.bridges[packet.js.from].via = packet.from.hashname;
+
+  chan.send({js:{end:true}});
 }
 
 // packets coming in from the LAN broadcast receiver

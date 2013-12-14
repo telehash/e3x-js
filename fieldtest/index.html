@@ -184,6 +184,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                       log("'whoami'","your info");
                       log("'seek hashname'","look for that hashname in the DHT");  
                       log("'ping hashname'","try to connect to and get response from that hashname");
+                      log("'h hashname'","show info on hashname");
                       log("'a|all'","show all connected hashnames");
                       log("'add hashname'","add a hashname to send messages to");
                       log("'m|message nick'","send a message to the nickname");
@@ -204,6 +205,16 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                       if(!host) return log("invalid hashname",arg[0]);
                       log("adding",host.hashname);
                       host.start("message", {js:{nick:id.nick}}, messageInit);  
+                    }
+                    cmds.h = function(arg){
+                      var host = me.whois(arg[0]);
+                      if(!host) return log("invalid hashname",arg[0]);
+                      Object.keys(host.paths).forEach(function(id){
+                        log("path",JSON.stringify(host.paths[id]));                        
+                      });
+                      Object.keys(host.chans).forEach(function(c){
+                        log("chan",host.chans[c].type,host.chans[c].id);
+                      });
                     }
                     cmds.message = cmds.m = function(arg){
                       if(!nicks[arg[0]]) return log("unknown recipient",arg[0]);
