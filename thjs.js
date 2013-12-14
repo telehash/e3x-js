@@ -1327,7 +1327,7 @@ function inLanSeed(self, packet)
 {
   if(packet.js.lan != self.lanToken) return debug("invalid lan token received")
   if(self.locals.length >= 5) return warn("locals full");
-  if(!packet.body) return;
+  if(!packet.body || packet.body.length == 0) return;
   var der = local.der2der(packet.body);
   var to = self.whois(local.der2hn(der));
   if(!to || to === self) return warn("invalid lan request from",packet.sender);
