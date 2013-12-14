@@ -36,14 +36,12 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
   self.address = self.hashname = local.der2hn(self.der);
   self.nat = true;
-  if(args.ip) self.ip = args.ip;
-  if(args.port) self.port = args.port;
 
   // udp socket stuff
   self.pcounter = 1;
@@ -63,11 +61,11 @@ exports.hashname = function(key, send, args)
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(to));
 	  send(to, msg);
 	};
-  self.setIP = function(ip)
+  self.pathSet = function(path)
   {
-    var updated = false;
-    if(self.ip && self.ip != ip) updated = true;
-    self.ip = ip;
+    var updated = (self.paths[path.type] && JSON.stringify(self.paths[path.type]) == JSON.stringify(path));
+    self.paths[path.type] = path;
+    // trigger pings if our address changed
     if(updated) meshPing(self);
   }
   
@@ -322,18 +320,20 @@ function myVia(from, address)
   var parts = address.split(",");
   if(parts.length != 3 || parts[1].split(".").length != 4 || !(parseInt(parts[2]) > 0)) return;
   if(parts[0] !== self.hashname) return;
-  // if it's a seed (trusted) update our known public IP/Port
-  if(from.isSeed || !self.pubip || self.pubip == "127.0.0.1")
+  if(isLocalIP(parts[0])) return; // ignore local IPs
+  // if it's a seed (trusted) or any, update our known public ipv4 IP/Port
+  if(from.isSeed || !self.paths.pub4)
   {
-    self.pubip = parts[1];
-    self.pubport = parseInt(parts[2]);
-    self.address = [self.hashname,self.pubip,self.pubport].join(",");
+    self.pathSet({type:"pub4", ip:parts[1], port:parseInt(parts[2])})
+    self.address = address;
   }else{
     // TODO multiple public IPs?
   }
   // detect when not NAT'd
-  self.nat = (self.ip == self.pubip && self.port == self.pubport) ? false : true;  
-  debug("NAT",self.nat,self.address,self.ip,self.port);
+  var lan = self.paths.lan4;
+  var pub = self.paths.pub4;
+  self.nat = (lan && pub && lan.ip == pub.ip && lan.port == pub.port) ? false : true;  
+  debug("NAT",self.nat,JSON.stringify(lan),JSON.stringify(pub));
 }
 
 function online(callback)
@@ -342,6 +342,8 @@ function online(callback)
   // ping lan
   self.lanToken = local.randomHEX(16);
   self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken}));
+  // start mesh maint
+  meshLoop(self);
   // safely callback only once or when all seeds failed
   function done(err)
   {
@@ -351,7 +353,6 @@ function online(callback)
     {
       callback();
       dones = 0;
-      meshLoop(self);
       return;
     }
     dones--;
@@ -385,7 +386,7 @@ function receive(msg, path)
   packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",(typeof msg.length == "function")?msg.length():msg.length,path.ip,path.port, packet.js.type, packet.body && packet.body.length);
+  debug("in",(typeof msg.length == "function")?msg.length():msg.length, packet.js.type, packet.body && packet.body.length,JSON.stringify(path));
 
   // handle any LAN notifications
   if(packet.js.type == "lan") return inLan(self, packet);
@@ -406,14 +407,21 @@ function receive(msg, path)
 
     // make sure this open is newer (if any others)
     if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
-    if (from.openAt && open.js.at <= from.openAt) return; // skip dups
+
+    // open is legit!
+    debug("inOpen verified", from.hashname);
+    from.recvAt = Date.now();
+
+    // add this path in
+    from.pathIn(path);
+
+    // don't re-process a duplicate open
+    if (from.openAt && open.js.at <= from.openAt) return;
 
     // update values
     var line = {};
-    debug("inOpen verified", from.hashname);
     from.openAt = open.js.at;
     from.der = open.rsa;
-    from.recvAt = Date.now();
     from.lineIn = open.js.line;
 
     // this will send an open if needed
@@ -425,9 +433,6 @@ function receive(msg, path)
     self.lines[from.lineOut] = from;
     bucketize(self, from); // add to their bucket
     
-    // add this path in
-    from.pathIn(path);
-
     // resend the last sent packet again
     if (from.lastPacket) {
       var packet = from.lastPacket;
@@ -587,7 +592,7 @@ function whois(hashname)
           var to = {type:"ipv4",ip:address[1],port:parseInt(address[2])};
           self.send(to,local.pencode());
           // if possibly behind the same NAT, set flag to allow/ask for a relay
-          if(self.nat && address[1] == self.pubip) hn.relay = "local";
+          if(self.nat && address[1] == (self.paths.pub4 && self.paths.pub4.ip)) hn.relay = "local";
         }else{ // no ip address, must relay
           hn.relay = true;
         }
@@ -680,6 +685,11 @@ function whois(hashname)
   {
     var js = {type:"peer", end:true, "peer":hashname, c:local.randomHEX(16)};
     if(relay) js.relay = true;
+    var alts = [];
+    if(self.paths.pub4) alts.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
+    if(self.paths.pub6) alts.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
+    if(self.paths.http) alts.push({type:"http", http:self.paths.http.http});
+    if(alts.length > 0) js.alts = alts;
     hn.send({js:js});
   }
 
@@ -737,12 +747,17 @@ function whois(hashname)
       // our outgoing priority of this path
       js.priority = (path.type == "ipv4") ? 1 : 0;
       var alts = [];
-      // if no ipv4 path and we have one, signal that
-      if(!types.ipv4 && self.pubip) alts.push({type:"ipv4", ip:self.pubip, port:self.pubport});
-      // we support http path too
-      if(self.path_http) alts.push({type:"http",http:self.path_http});
+      // if no ip paths and we have some, signal them
+      if(!types.ipv4 && self.paths.pub4) alts.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
+      if(!types.ipv6 && self.paths.pub6) alts.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
+      // if we support http path too
+      if(self.paths.http) alts.push({type:"http",http:self.paths.http.http});
       // include local ip/port if we're relaying to them
-      if(hn.relay == "local" && self.ip) alts.push({type:"ipv4", ip:self.ip, port:self.port});
+      if(hn.relay == "local")
+      {
+        if(self.paths.lan4) alts.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
+        if(self.paths.lan6) alts.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});        
+      }
       if(alts.length > 0) js.alts = alts;
       hn.raw("path",{js:js, timeout:3000, direct:path}, function(err, packet){
         // when it actually errored, lower priority
@@ -1142,10 +1157,20 @@ function inConnect(err, packet, chan)
     to.open(path);
   }
   
-  // TODO try any .alts
+  // try any alts
+  if(Array.isArray(packet.js.alts)) packet.js.alts.forEach(function(path){
+    if(path.ip == packet.js.ip && path.port == packet.js.port) return; // skip if dup
+    if(path.type == "http") path.id = path.http; // our internal path format
+    to.sentOpen = false; // disable open throttling
+    to.open(path);
+  });
 
   // if relay is requested, try that
-  if(packet.js.relay === true) to.open({type:"newrelay",via:packet.from.hashname});
+  if(packet.js.relay === true)
+  {
+    to.sentOpen = false; // disable open throttling
+    to.open({type:"newrelay",via:packet.from.hashname});    
+  }
 }
 
 // be the middleman to help NAT hole punch
@@ -1164,8 +1189,13 @@ function inPeer(err, packet, chan)
   }else{
     js.relay = true; // if no ip information, we must relay    
   }
-  // TODO copy .alts
-  if(packet.js.relay === true) js.relay = true; // pass through relay flag
+  // copy over any alternate paths coming in
+  if(Array.isArray(packet.js.alts)) js.alts = packet.js.alts;
+
+  // pass through relay flag
+  if(packet.js.relay === true) js.relay = true;
+
+  // must bundle the senders der so the recipient can open them
   peer.send({js:js, body:packet.from.der});
 }
 
@@ -1383,6 +1413,26 @@ function hex2nib(hex)
   return ret;
 }
 
+// return if an IP is local or public
+function isLocalIP(ip)
+{
+  // ipv6 ones
+  if(ip.indexOf(":") > 0)
+  {
+    if(ip == "::1") return true; // localhost
+    if(ip.indexOf("fc00") == 0) return true;
+    if(ip.indexOf("fe80") == 0) return true;
+    return false;
+  }
+  
+  var parts = ip.split(".");
+  if(parts[0] == "127") return true; // localhost
+  if(parts[0] == "10") return true;
+  if(parts[0] == "192" && parts[1] == "168") return true;
+  if(parts[0] == "172" && parts[1] >= 16 && parts[1] <= 31) return true;
+  if(parts[0] == "169" && parts[1] == "254") return true; // link local
+  return false;
+}
 
 // our browser||node safe wrapper
 })(typeof exports === 'undefined'? this['thjs']={}: exports);
