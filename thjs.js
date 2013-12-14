@@ -42,7 +42,6 @@ exports.hashname = function(key, send, args)
   self.der = local.key2der(self.public);
   self.address = self.hashname = local.der2hn(self.der);
   self.nat = true;
-  if(args.family) self.family = args.family;
   if(args.ip) self.ip = args.ip;
   if(args.port) self.port = args.port;
 
@@ -342,7 +341,7 @@ function online(callback)
 	var self = this;
   // ping lan
   self.lanToken = local.randomHEX(16);
-  self.send({type:"ipv4", lan:true, ip:"255.255.255.255", port:42424}, local.pencode({type:"lan",lan:self.lanToken}));
+  self.send({type:"lan", ip:self.ip, port:42424}, local.pencode({type:"lan",lan:self.lanToken}));
   // safely callback only once or when all seeds failed
   function done(err)
   {
@@ -389,8 +388,8 @@ function receive(msg, path)
   debug("in",(typeof msg.length == "function")?msg.length():msg.length,path.ip,path.port, packet.js.type, packet.body && packet.body.length);
 
   // handle any LAN notifications
-  if(path.lan) return inLan(self, packet);
-  if(packet.js.type == "lan") return inLanSeed(self, packet);
+  if(packet.js.type == "lan") return inLan(self, packet);
+  if(packet.js.type == "seed") return inLanSeed(self, packet);
 
   if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", path);
 
@@ -1315,18 +1314,22 @@ function inBridge(err, packet, chan)
   chan.send({js:{end:true}});
 }
 
-// packets coming in from the LAN broadcast receiver
+// type lan, looking for a local seed
 function inLan(self, packet)
 {
   if(packet.js.lan == self.lanToken) return; // ignore ourselves
-  delete packet.sender.lan;
-  self.send(packet.sender, local.pencode(packet.js, self.der));
+  if(self.locals.length > 0) return; // someone locally is announcing already
+  if(self.lanSkip == self.lanToken) return; // often immediate duplicates, skip them
+  self.lanSkip = self.lanToken;
+  // announce ourself as the seed back
+  packet.js.type = "seed";
+  self.send({type:"lan",ip:self.ip,port:42424}, local.pencode(packet.js, self.der));
 }
 
 // answers from any LAN broadcast notice we sent
 function inLanSeed(self, packet)
 {
-  if(packet.js.lan != self.lanToken) return debug("invalid lan token received")
+  if(packet.js.lan != self.lanToken) return;
   if(self.locals.length >= 5) return warn("locals full");
   if(!packet.body || packet.body.length == 0) return;
   var der = local.der2der(packet.body);
@@ -1335,6 +1338,7 @@ function inLanSeed(self, packet)
   if(to === self) return;
   to.der = der;
   to.local = true;
+  debug("local seed open",to.hashname,JSON.stringify(packet.sender));
   to.open(packet.sender);
 }
 
