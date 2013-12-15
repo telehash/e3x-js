@@ -303,6 +303,11 @@ function addSeed(arg) {
     if(!seed.paths[id]) seed.paths[id] = {id:id, type:"ipv4", ip:arg.ip, port:arg.port, priority:0};    
     seed.address = [seed.hashname,arg.ip,arg.port].join(","); // given ip:port should always be the most valid
   }
+  if(arg.ip6)
+  {
+    var id = arg.ip6+":"+arg.port6;
+    if(!seed.paths[id]) seed.paths[id] = {id:id, type:"ipv6", ip:arg.ip6, port:arg.port6, priority:1};    
+  }
   if(arg.http)
   {
     if(!seed.paths[arg.http]) seed.paths[arg.http] = {id:arg.http, type:"http",priority:-1};
@@ -413,7 +418,7 @@ function receive(msg, path)
     from.recvAt = Date.now();
 
     // add this path in
-    from.pathIn(path);
+    path = from.pathIn(path);
 
     // don't re-process a duplicate open
     if (from.openAt && open.js.at <= from.openAt) return;
@@ -501,11 +506,7 @@ function whois(hashname)
     hn.alive = true;
 
     // always normalize to ipv4 address as default
-    if(!path.id)
-    {
-      path.type = "ipv4";
-      path.id = path.ip+":"+path.port;
-    }
+    if(!path.type || !path.id) return warn("unknown path in", JSON.stringify(path));
 
     // just use existing path entry
     if(hn.paths[path.id])
