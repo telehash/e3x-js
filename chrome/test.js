@@ -18,15 +18,17 @@ function load()
         sock.setLocal(me);
         setTimeout(locals, 10000);
       }
-      locals();
       sock.receive = function(msg,from){me.receive(msg,from)};
     	console.log("switch created",me);
       document.querySelector("#hashname").innerHTML = me.hashname;
 			id.seeds.forEach(me.addSeed, me);
-			me.online(function(err,to){
-			  console.log("online",err,to&&to.hashname);
-        document.querySelector("#online").innerHTML = err||"online";
-      })
+      sock.setLocal(me, function(){
+        setTimeout(locals, 10000); // start monitoring
+  			me.online(function(err,to){
+  			  console.log("online",err,to&&to.hashname);
+          document.querySelector("#online").innerHTML = err||"online";
+        });        
+      });
     });
   });
 }
