@@ -1441,15 +1441,16 @@ function hex2nib(hex)
 function isLocalIP(ip)
 {
   // ipv6 ones
-  if(ip.indexOf(":") > 0)
+  if(ip.indexOf(":") >= 0)
   {
-    if(ip == "::1") return true; // localhost
+    if(ip.indexOf("::") == 0) return true; // localhost
     if(ip.indexOf("fc00") == 0) return true;
     if(ip.indexOf("fe80") == 0) return true;
     return false;
   }
   
   var parts = ip.split(".");
+  if(parts[0] == "0") return true;
   if(parts[0] == "127") return true; // localhost
   if(parts[0] == "10") return true;
   if(parts[0] == "192" && parts[1] == "168") return true;
@@ -1457,6 +1458,7 @@ function isLocalIP(ip)
   if(parts[0] == "169" && parts[1] == "254") return true; // link local
   return false;
 }
+exports.isLocalIP = isLocalIP;
 
 // our browser||node safe wrapper
 })(typeof exports === 'undefined'? this['thjs']={}: exports);
