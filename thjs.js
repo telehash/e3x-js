@@ -36,7 +36,7 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
@@ -47,18 +47,23 @@ exports.hashname = function(key, send, args)
   self.pcounter = 1;
   self.receive = receive;
   // outgoing packets to the network
-	self.send = function(to, msg){
+	self.send = function(to, msg, from){
     if(!to) return warn("send called w/ no network, dropping");
     to.lastOut = Date.now();
     // a relay network must be resolved to the channel and wrapped/sent that way
     if(to.type == "relay")
     {
       var via = self.whois(to.via);
-      if(!via || !via.chans[to.id]) return debug("dropping dead relay via",to.via);
+      if(!via || !via.chans[to.id] || !via.alive)
+      {
+        debug("dropping dead relay via",to.via);
+        if(from) delete from.paths[to.id]; // remove dead path
+        return
+      }
       return via.chans[to.id].send({body:msg});
     }
     // hand rest to the external sending function passed in
-    debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(to));
+    debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(to),from&&from.hashname);
 	  send(to, msg);
 	};
   self.pathSet = function(path)
@@ -175,6 +180,7 @@ exports.channelWraps = {
 // every 25 seconds do the maintenance work for peers
 function meshLoop(self)
 {
+  self.bridgeIVs = {}; // reset IV cache for any bridging
   debug("MESHA")
 //  meshReap(self); // remove any dead ones, temporarily disabled due to node crypto compiled cleanup bug
   meshElect(self); // which ones go into buckets
@@ -460,6 +466,8 @@ function receive(msg, path)
 	  if(!line) {
 	    if(!self.bridges[packet.js.line]) return debug("unknown line received", packet.js.line, JSON.stringify(packet.sender));
       debug("BRIDGE",JSON.stringify(self.bridges[packet.js.line]));
+      if(self.bridgeIVs[packet.js.iv]) return; // drop duplicates
+      self.bridgeIVs[packet.js.iv] = true;
       // flat out raw retransmit any bridge packets
       return self.send(self.bridges[packet.js.line],msg);
 	  }
@@ -515,12 +523,20 @@ function whois(hashname)
     }else{
       // store a new path
       hn.paths[path.id] = path;
-      // sync when a relay is added (slightly delayed so other stuff can happen first)
-      if(path.type == "relay") setTimeout(hn.sync,1000);
+      // new relays are trigger/special cases
+      if(path.type == "relay")
+      {
+        // remove any old relay path for outgoing
+        Object.keys(hn.paths).forEach(function(id){
+          if(hn.paths[id].type == "relay" && id != path.id) delete hn.paths[id];
+        })
+        // sync when a relay is added (slightly delayed so other stuff can happen first)
+        setTimeout(hn.sync,1000);
+      }
       // when multiple networks trigger a sync
       if(Object.keys(hn.paths).length > 1) hn.sync();
       // update address
-      if(path.type == "ipv4") hn.address = [hn.hashname,path.ip,path.port].join(",");
+      if(path.type == "ipv4" && isLocalIP(path.ip)) hn.address = [hn.hashname,path.ip,path.port].join(",");
     }
     
     // track last timestamp
@@ -541,7 +557,7 @@ function whois(hashname)
       var lined = packet.msg || local.lineize(hn, packet);
       
       // directed packets are a special case (path testing), dump and forget
-      if(packet.direct) return self.send(packet.direct, lined);
+      if(packet.direct) return self.send(packet.direct, lined, hn);
       
       hn.sentAt = Date.now();
 
@@ -565,9 +581,11 @@ function whois(hashname)
       // try them in order until there's a valid one
       for(var i = 0; i < paths.length; i++)
       {
+        var path = hn.paths[paths[i]];
+        if(packet.sender && packet.sender.type == "relay" && path.type == "relay") return debug("skipping double-relay path",JSON.stringify(packet.sender),JSON.stringify(path));
         // validate first since it uses .lastOut which .send updates
-        var valid = validate(hn.paths[paths[i]]);
-        self.send(hn.paths[paths[i]], lined);
+        var valid = validate(path);
+        self.send(path, lined, hn);
         if(valid) return; // any valid path means we're done!
       }
     }
@@ -713,12 +731,12 @@ function whois(hashname)
         var relay = self.whois(direct.via);
         relay.raw("relay", {js:{"to":hn.hashname},body:open}, inRelayMe);
       }else{
-        self.send(direct, open);        
+        self.send(direct, open, hn);        
       }
     }else{
       // always send to all known paths, increase resiliency
       Object.keys(hn.paths).forEach(function(id){
-        self.send(hn.paths[id], open);
+        self.send(hn.paths[id], open, hn);
       });      
     }
 
@@ -1230,9 +1248,13 @@ function inRelay(err, packet, chan)
       inRelayMe(err, packet, chan);
       return;
     }
+    
+    // don't create a relay when it's coming from a relay
+    if(packet.sender.type == "relay") return debug("ignoring relay request from a relay",packet.js.to,JSON.stringify(packet.sender));
 
     // if to someone else, save them for future packets
     var to = self.whois(packet.js.to);
+    if(to === packet.from) return warn("can't relay to yourself",packet.from.hashname);
     if(!to || !to.lineIn) return warn("relay to unknown line", packet.js.to, packet.from.address);
     
     // set up the reverse channel and x-link them
@@ -1250,6 +1272,7 @@ function inRelay(err, packet, chan)
   chan.relays++;
 
   // dumb relay
+  debug("relay middleman",chan.hashname,chan.pair.hashname);
   chan.relayed = Date.now();
   chan.pair.send(packet);
 }

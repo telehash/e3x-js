@@ -36,6 +36,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
       	<script src="../seeds.js"></script>
         <script src="socket.io.js"></script>
         <script>
+        var me; // make global for console testing
         thforge.forge(forge);
         thjs.debug(function(){console.log.apply(console,arguments)});
         function getId(callback)
@@ -91,7 +92,6 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
 
             $(document).ready(function() {
               console.log("READY")
-              var me;
               getId(function(id){
           	    var sockets = {};
                 console.log("STARTING")
