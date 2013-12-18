@@ -60,7 +60,8 @@ exports.hashname = function(key, send, args)
         if(from) delete from.paths[to.id]; // remove dead path
         return
       }
-      return via.chans[to.id].send({body:msg});
+      // must include the sender path here to detect double-relay
+      return via.chans[to.id].send({sender:to, body:msg});
     }
     // hand rest to the external sending function passed in
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(to),from&&from.hashname);
