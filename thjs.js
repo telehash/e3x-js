@@ -168,12 +168,23 @@ exports.channelWraps = {
     chan.callback = function(packet, callback)
     {
       if(packet.js.body) bulkIn += packet.js.body;
-      if(packet.js.end && chan.onBulk) chan.onBulk(packet.js.err||packet.js.end, bulkIn);
+      if(!chan.onBulk) return;
+      if(packet.js.err) return chan.onBulk(packet.js.err);
+      if(packet.js.end) chan.onBulk(false, bulkIn);
     }
     // handle (optional) outgoing bulk flow
     chan.bulk = function(data, callback)
     {
-      // TODO break arg.bulk into chunks and send out using chan.push()      
+      // break data into chunks and send out, no backpressure yet
+      while(data)
+      {
+        var chunk = data.substr(0,1000);
+        data = data.substr(1000);
+        var packet = {body:chunk};
+        if(!data) packet.callback = callback; // last packet gets confirmed
+        chan.send();
+      }
+      chan.end();
     }
 	}
 }
@@ -797,27 +808,18 @@ function seek(hn, callback)
 {
   var self = this;
   if(typeof hn == "string") hn = self.whois(hn);
-  if(hn === self) return callback("can't seek yourself");
-  if(hn.seeking) return callback("already seeking");
-  hn.seeking = true;
-
-  var isDone = false;
-  function done(err)
-  {
-    if(isDone) return;
-    isDone = true;
-    hn.seeking = false;
-    callback(err);
-  }
 
   var did = {};
   var doing = {};
   var queue = [];
   var closest = 255;
+  
+  // load up who we know closest
   self.nearby(hn.hashname).forEach(function(near){
-    if(near === hn) return; // ignore the one we're seeking
+    if(near === hn) return; // ignore the one we're (re)seeking
     if(queue.indexOf(near.hashname) == -1) queue.push(near.hashname);
   });
+
   // always process potentials in order
   function sort()
   {
@@ -827,9 +829,25 @@ function seek(hn, callback)
   }
   sort();
 
+  // track when we finish
+  function done(err)
+  {
+    // get all the hashnames we used/found and do final sort to return
+    Object.keys(did).forEach(function(k){ if(queue.indexOf(k) == -1) queue.push(k); });
+    Object.keys(doing).forEach(function(k){ if(queue.indexOf(k) == -1) queue.push(k); });
+    sort();
+    while(cb = hn.seeking.shift()) cb(err, queue.slice());
+  }
+
+  // track callback(s);
+  if(!hn.seeking) hn.seeking = [];
+  hn.seeking.push(callback);
+  if(hn === self) return done(); // always a success heh  
+  if(hn.seeking.length > 1) return;
+
   // main loop, multiples of these running at the same time
   function loop(onetime){
-    if(isDone) return;
+    if(!hn.seeking.length) return; // already returned
     debug("SEEK LOOP",queue);
     // if nothing left to do and nobody's doing anything, failed :(
     if(Object.keys(doing).length == 0 && queue.length == 0) return done("failed to find the hashname");

@@ -279,9 +279,10 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                     {
                       var hn = me.whois(arg[0]);
                       if(!hn) return log("invalid hashname",arg[0]);
-                      me.seek(hn, function(err){
+                      me.seek(hn, function(err, seen){
                         if(err) return log("seek failed",hn.hashname,err);
                         log("seek",hn.hashname,JSON.stringify(hn.vias));
+                        log("seen",seen&&seen.join(" "));
                       });
                     }
                     cmds.ping = function(arg)
@@ -292,6 +293,19 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                       hn.seek(me.hashname,function(err){
                         if(err && err !== true) return log("ping failed",hn.hashname,err);
                         log("pong",hn.address,Date.now()-start);
+                      });
+                    }
+                    cmds.bulk = function(arg)
+                    {
+                      var hn = me.whois(arg.shift());
+                      if(!hn) return log("invalid hashname");
+                      hn.start("bulk",{js:{tft:true}},function(err,packet,chan,cb){
+                        cb();
+                        if(err) return log("bulk failed",hn.hashname,err);
+                        chan.wrap("bulk");
+                        chan.bulk(arg.join(" "), function(err){
+                          log("bulked",err);
+                        })
                       });
                     }
                     
@@ -321,6 +335,16 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                           chan.send({js:{members:chunk}});
                           if(mlist.length == 0) chan.end();
                         }
+                      });
+                      me.listen("bulk", function(err, arg, chan, cb){
+                        log("bulk started from",chan.hashname);
+                        chan.wrap("bulk");
+                        chan.onBulk(function(err, data){
+                          if(err) return log("bulk error",err);
+                          log("bulk received:",data);
+                        });
+                        chan.send({js:{tft:true}});
+                        cb();
                       });
 
                       $("#message-input").focus();
