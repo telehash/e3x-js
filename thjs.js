@@ -300,13 +300,11 @@ function bridge(to, callback)
   if(Object.keys(to.possible).length == 0) return callback(); // no possible paths to bridge to
 
   var found;
-  function start(via)
+  function start(via, path)
   {
-    // default to any possible path
-    var path = to.possible[Object.keys(to.possible)[0]];
     // try to find a better path type we know the bridge supports
-    via.paths.forEach(function(p){
-      if(to.possible[p.type]) path = to.possible[p.type];
+    if(!path) via.paths.forEach(function(p){
+      if(!path || to.possible[p.type]) path = to.possible[p.type];
     });
     via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
       // TODO we can try another path and/or via?
@@ -316,7 +314,7 @@ function bridge(to, callback)
   }
   
   // if there's a bridge volunteer for them already
-  if(to.bridge) return start(self.whois(to.bridge));
+  if(to.bridge) return start(self.whois(to.bridge), to.possible.bridge);
 
   // find any bridge seed
   Object.keys(self.seeds).forEach(function(seed){
@@ -561,7 +559,7 @@ function whois(hashname)
       case "http":
         if(path1.http == path2.http) match = path1;
         break;
-      case "custom":
+      case "bridge":
         if(path1.id == path2.id) match = path1;
         break;
       }
@@ -572,7 +570,11 @@ function whois(hashname)
   // manage network information consistently, called on all validated incoming packets
   hn.pathIn = function(path)
   {
-    if(!path.type) return warn("unknown path in", JSON.stringify(path));
+    if(["ipv4","ipv6","http","bridge","relay"].indexOf(path.type) == -1)
+    {
+      warn("unknown path type", JSON.stringify(path));
+      return path;
+    }
 
     // relays are special cases, not full paths
     if(path.type == "relay")
@@ -662,6 +664,7 @@ function whois(hashname)
         var path = paths[i];
         // validate first since it uses .lastOut which .send updates
         var valid = validate(path);
+        if(!valid) debug("invalid path",JSON.stringify(path));
         self.send(path, lined, hn);
         if(valid) return; // any valid path means we're done!
       }
@@ -1288,7 +1291,7 @@ function inConnect(err, packet, chan)
   if(typeof packet.js.bridge == "object" && typeof packet.js.bridge.type == "string")
   {
     to.bridge = packet.from.hashname;
-    to.possible[packet.js.bridge.type] = packet.js.bridge;
+    to.possible.bridge = packet.js.bridge;
   }
 
   // if relay is requested, try that
