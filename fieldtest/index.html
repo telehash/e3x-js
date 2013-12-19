@@ -98,13 +98,13 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
           	    	me = thjs.hashname(id, function(to, msg) {
                     if(to.type != "http") return console.log("dropping ",to.type);
                     console.log("sending", to.hashname, msg.length());
-                    if(!sockets[to.id]){
-                      sockets[to.id] = io.connect(to.id);
-                      sockets[to.id].on("packet", function(packet){
+                    if(!sockets[to.http]){
+                      sockets[to.http] = io.connect(to.http);
+                      sockets[to.http].on("packet", function(packet){
                 	    	me.receive(forge.util.decode64(packet.data), to);                        
                       });
                     }
-                    sockets[to.id].emit("packet", {data: forge.util.encode64(msg.bytes())});
+                    sockets[to.http].emit("packet", {data: forge.util.encode64(msg.bytes())});
                   });
           	    	console.log("switch created",me);
           				id.seeds.forEach(me.addSeed, me);
@@ -209,8 +209,8 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                     cmds.h = function(arg){
                       var host = me.whois(arg[0]);
                       if(!host) return log("invalid hashname",arg[0]);
-                      Object.keys(host.paths).forEach(function(id){
-                        log("path",JSON.stringify(host.paths[id]));                        
+                      host.paths.forEach(function(path){
+                        log("path",JSON.stringify(path));                        
                       });
                       Object.keys(host.chans).forEach(function(c){
                         log("chan",host.chans[c].type,host.chans[c].id);
