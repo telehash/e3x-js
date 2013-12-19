@@ -308,7 +308,7 @@ function bridge(to, callback)
     });
     via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
       // TODO we can try another path and/or via?
-      if(end !== true) debug("failed to create bridge",end,seed.hashname);
+      if(end !== true) debug("failed to create bridge",end,via.hashname);
       callback((end==true)?packet.sender:false);
     });    
   }
