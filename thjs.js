@@ -48,25 +48,25 @@ exports.hashname = function(key, send, args)
   self.pcounter = 1;
   self.receive = receive;
   // outgoing packets to the network
-	self.send = function(to, msg, from){
-    if(!to) return warn("send called w/ no network, dropping");
-    to.lastOut = Date.now();
+	self.send = function(path, msg, to){
+    if(!path) return warn("send called w/ no network, dropping");
+    path.lastOut = Date.now();
     // a relay network must be resolved to the channel and wrapped/sent that way
-    if(to.type == "relay")
+    if(path.type == "relay")
     {
-      var via = self.whois(to.via);
-      if(!via || !via.chans[to.id] || !via.alive)
+      var via = self.whois(path.via);
+      if(!via || !via.chans[path.id] || !via.alive)
       {
-        debug("dropping dead relay via",JSON.stringify(to),via&&via.alive);
-        if(from) from.relay = false;
+        debug("dropping dead relay via",JSON.stringify(path),via&&via.alive);
+        if(to) to.relay = false;
         return;
       }
       // must include the sender path here to detect double-relay
-      return via.chans[to.id].send({sender:to, js:{type:"relay",to:to.hashname}, body:msg});
+      return via.chans[path.id].send({sender:path, js:{type:"relay",to:to.hashname}, body:msg});
     }
     // hand rest to the external sending function passed in
-    debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(to),from&&from.hashname);
-	  send(to, msg);
+    debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(path),to&&to.hashname);
+	  send(path, msg);
 	};
   self.pathSet = function(path)
   {
@@ -679,8 +679,8 @@ function whois(hashname)
         if(address.length == 3 && address[1].split(".").length == 4 && parseInt(address[2]) > 0)
         {
           // NAT hole punching
-          var to = {type:"ipv4",ip:address[1],port:parseInt(address[2])};
-          self.send(to,local.pencode());
+          var path = {type:"ipv4",ip:address[1],port:parseInt(address[2])};
+          self.send(path,local.pencode());
           // if possibly behind the same NAT, set flag to allow/ask to relay a local path
           if(self.nat && address[1] == (self.paths.pub4 && self.paths.pub4.ip)) hn.relayAsk = "local";
         }else{ // no ip address, must relay
