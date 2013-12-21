@@ -372,6 +372,7 @@ function myVia(from, address)
   // if it's a seed (trusted) or any, update our known public ipv4 IP/Port
   if(from.isSeed || !self.paths.pub4)
   {
+    debug("updating public ipv4",address);
     self.pathSet({type:"pub4", ip:parts[1], port:parseInt(parts[2])})
     self.address = address;
   }else{
@@ -544,9 +545,9 @@ function whois(hashname)
   {
     var ip4 = hn.address.split(",")[1];
     // no ipv4 path, no nat
-    if(!ip4 || !self.paths.ipv4) return defaults.idle_timeout;
+    if(!ip4 || !self.paths.lan4) return defaults.idle_timeout;
     // if one is local and the other is not
-    return (isLocalIP(self.paths.ipv4.ip) && !isLocalIP(ip4)) ? defaults.nat_timeout : defaults.idle_timeout;
+    return (isLocalIP(self.paths.lan4.ip) && !isLocalIP(ip4)) ? defaults.nat_timeout : defaults.idle_timeout;
   }
 
   // manage network information consistently, called on all validated incoming packets
@@ -1268,7 +1269,8 @@ function inConnect(err, packet, chan)
 
   // try the suggested paths
   if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
-    // if they are offering to provide a bridge, save that info for later
+    if(typeof path.type != "string") return debug("bad path",JSON.stringify(path));
+    // if they are offering to provide a bridge, save that info for later as a fallback
     if(path.type == "bridge")
     {
       path.via = packet.from.hashname;
@@ -1279,6 +1281,9 @@ function inConnect(err, packet, chan)
     to.sentOpen = sentOpen; // restore throttling var since these are all bunched together, could be refactored better as a batch
     to.open(path);
   });
+  
+  // if we didn't send any, no valid paths, always try a relay
+  if(to.sentOpen == sentOpen) to.open({type:"relay",id:local.randomHEX(16),via:packet.from.hashname});
 }
 
 // be the middleman to help NAT hole punch
@@ -1326,8 +1331,8 @@ function inPeer(err, packet, chan)
   // try to include the sending path, will include the bridge if that's the sender
   push(packet.sender);
   
-  // if none, always include a relay
-  if(js.paths.length == 0 && packet.sender.type != "relay") js.paths.push({type:"relay", id:local.randomHEX(16)});
+  // if none or bridge only, include a relay (if not relaying already)
+  if((js.paths.length == 0 || (js.paths.length == 1 && js.paths[0].type == "bridge")) && packet.sender.type != "relay") js.paths.push({type:"relay", id:local.randomHEX(16)});
 
   // must bundle the senders der so the recipient can open them
   peer.send({js:js, body:packet.from.der});
