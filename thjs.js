@@ -1448,7 +1448,7 @@ function inPath(err, packet, chan)
   var priority = (packet.sender.type == "relay") ? 0 : 2;
 
   // if bridging, and this path is from the bridge, flag it for lower priority
-  if(packet.from.bridge && pathMatch(packet.sender, self.whois(packet.from.bridge).paths)) priority = 1;
+  if(packet.from.bridge && pathMatch(packet.sender, packet.from.self.whois(packet.from.bridge).paths)) priority = 1;
 
   chan.send({js:{end:true, priority:priority}});
 }
