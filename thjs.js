@@ -347,7 +347,7 @@ function addSeed(arg) {
   }
   if(arg.ip6)
   {
-    var path = {type:"ipv6", ip:arg.ip, port:arg.port, priority:-1};
+    var path = {type:"ipv6", ip:arg.ip6, port:arg.port6, priority:-1};
     if(!pathMatch(path, seed.paths)) seed.paths.push(path);
   }
   if(arg.http)
