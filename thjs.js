@@ -37,7 +37,7 @@ exports.hashname = function(key, send, args)
 
   // configure defaults
   if(!args) args = {};
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}, TSockets:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
@@ -98,6 +98,26 @@ exports.hashname = function(key, send, args)
     if(typeof type != "string" || typeof callback != "function") return warn("invalid arguments to raw");
     self.raws[type] = callback;
   };
+
+  // TeleSocket handling
+  //   - to listen pass path-only uri "/foo/bar", fires callback(socket) on any incoming matching uri
+  //   - to connect, pass in full uri "ts://hashname/path" returns socket
+  self.socket = function(uri, callback)
+  {
+    if(typeof uri != "string") return warn("invalid TS uri")&&false;
+    // detect connecting socket
+    if(uri.indexOf("ts://") == 0)
+    {
+      var parts = uri.substr(5).split("/");
+      var to = self.whois(parts.shift());
+      if(!to) return warn("invalid TS hashname")&&false;
+      return to.socket(parts.join("/"));
+    }
+    if(uri.indexOf("/") != 0) return warn("invalid TS listening uri")&&false;
+    debug("adding TS listener",uri)
+    self.TSockets[uri] = callback;
+  }
+	self.rels["ts"] = inTS;
   
 	// internal listening unreliable channels
 	self.raws["peer"] = inPeer;
@@ -189,7 +209,58 @@ exports.channelWraps = {
       }
       chan.end();
     }
-	}
+	},
+  "TS":function(chan){
+    chan.socket = {data:"", hashname:chan.hashname, id:chan.id};
+    chan.callback = function(err, packet, chan, callback){
+      // go online
+      if(chan.socket.readyState == 0)
+      {
+        chan.socket.readyState = 1;
+        if(chan.socket.onopen) chan.socket.onopen();
+      }
+      if(packet.body) chan.socket.data += packet.body;
+      if(packet.js.done)
+      {
+        // allow ack-able onmessage handler instead
+        if(chan.socket.onmessageack) chan.socket.onmessageack(chan.socket, callback);
+        else callback();
+        if(chan.socket.onmessage) chan.socket.onmessage(chan.socket);
+        chan.socket.data = "";
+      }else{
+        callback();
+      }
+      if(err)
+      {
+        chan.socket.readyState = 2;
+        if(err != true && chan.socket.onerror) chan.socket.onerror(err);
+        if(chan.socket.onclose) chan.socket.onclose();
+      }
+    }
+    // set up TS object for external use
+    chan.socket.readyState = 0;
+    chan.socket.send = function(data, callback){
+      if(chan.socket.readyState != 1) return false;
+      // chunk it
+      while(data)
+      {
+        var chunk = data.substr(0,1000);
+        data = data.substr(1000);
+        var packet = {js:{},body:chunk};
+        // last packet gets confirmed/flag
+        if(!data)
+        {
+          packet.callback = callback;
+          packet.js.done = true;
+        }
+        chan.send(packet);
+      }
+    }
+    chan.socket.close = function(){
+      chan.socket.readyState = 2;
+      chan.done();
+    }    
+  }
 }
 
 // every 25 seconds do the maintenance work for peers
@@ -878,6 +949,16 @@ function whois(hashname)
     });
   }
 
+  // create an outgoing TeleSocket
+  hn.socket = function(pathname)
+  {
+    if(!pathname) pathname = "/";
+    // passing id forces internal/unescaped mode
+    var chan = hn.start("ts",{id:local.randomHEX(16),js:{path:pathname}});
+    chan.wrap("TS");
+    return chan.socket;
+  }
+  
   return hn;
 }
 
@@ -1030,13 +1111,14 @@ function raw(type, arg, callback)
 function channel(type, arg, callback)
 {
   var hn = this;
-  if(type.substr(0,1) !== "_") type = "_"+type;
   var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:-1, lastAck:-1, callback:callback};
   chan.id = arg.id || local.randomHEX(16);
 	hn.chans[chan.id] = chan;
   chan.timeout = arg.timeout || defaults.chan_timeout;
-  // for now all reliable channels are app ones
-  chan.type = (type.substr(0,1) == "_") ? type : "_"+type;
+  // app originating if no id, be friendly w/ the type, don't double-underscore if they did already
+  if(!arg.id && type.substr(0,1) !== "_") type = "_"+type;  
+  chan.type = type; // save for debug
+  if(chan.type.substr(0,1) != "_") chan.safe = true; // means don't _ escape the json
   chan.hashname = hn.hashname; // for convenience
 
   debug("new channel",hn.hashname,chan.type,chan.id);
@@ -1154,7 +1236,7 @@ function channel(type, arg, callback)
     if(!packet) return;
     chan.handling = true;
     var err = packet.js.err||packet.js.end;
-    packet.js = packet.js._ || {}; // unescape all content json
+    if(!chan.safe) packet.js = packet.js._ || {}; // unescape all content json
     chan.callback(err, packet, chan, function(){
       chan.inq.shift();
       chan.inDone++;
@@ -1225,7 +1307,7 @@ function channel(type, arg, callback)
     // create a new packet from the arg
     if(!arg) arg = {};
     var packet = {};
-    packet.js = {_:arg.js};
+    packet.js = chan.safe ? arg.js : {_:arg.js};
     if(arg.type) packet.js.type = arg.type;
     if(arg.end) packet.js.end = arg.end;
     packet.body = arg.body;
@@ -1487,6 +1569,23 @@ function inBridge(err, packet, chan)
   self.bridges[packet.js.to].via = self.bridges[packet.js.from].via = packet.from.hashname;
 
   chan.send({js:{end:true}});
+}
+
+// handle any bridge requests, if allowed
+function inTS(err, packet, chan, callback)
+{
+  if(err) return;
+  var self = packet.from.self;
+  callback();
+
+  console.log("INTS",packet.js);
+  // ensure valid request
+  if(typeof packet.js.path != "string" || !self.TSockets[packet.js.path]) return chan.err("unknown path");
+  
+  // create the socket and hand back to app
+  chan.wrap("TS");
+  self.TSockets[packet.js.path](chan.socket);
+  chan.send({js:{ok:true}});
 }
 
 // type lan, looking for a local seed

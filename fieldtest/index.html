@@ -347,6 +347,11 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                         chan.send({js:{tft:true}});
                         cb();
                       });
+                      me.socket("/", function(socket){
+                        log("TS new",socket.id,socket.hashname);
+                        socket.onmessage = function(msg){log("TS",socket.id,msg.data)};
+                        socket.onclose = function(){log("TS close",socket.id)};
+                      });
 
                       $("#message-input").focus();
                       $("#message-form").submit(function(ev) {
