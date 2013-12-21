@@ -645,7 +645,7 @@ function whois(hashname)
       // sort all possible paths by preference, priority and recency
       var paths = hn.paths.sort(function(a,b){
         if(packet.to && a === packet.to) return 1; // always put the .to at the top of the list, if any
-        if(a.priority == b.priority) return b.lastIn - a.lastIn;
+        if(a.priority == b.priority) return a.lastIn - b.lastIn;
         return b.priority - a.priority;
       });
       
@@ -793,7 +793,7 @@ function whois(hashname)
       if(self.paths.lan4) js.paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
       if(self.paths.lan6) js.paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});      
     }
-    if(relay) js.paths.push({type:"relay", id:local.randomHEX(16)});
+    if(relay || js.paths.length == 0) js.paths.push({type:"relay", id:local.randomHEX(16)});
     hn.send({js:js});
   }
 
