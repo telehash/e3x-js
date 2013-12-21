@@ -168,12 +168,12 @@ exports.channelWraps = {
 	"bulk":function(chan){
     // handle any incoming bulk flow
     var bulkIn = "";
-    chan.callback = function(packet, callback)
+    chan.callback = function(end, packet, chan, cb)
     {
-      if(packet.js.body) bulkIn += packet.js.body;
+      cb();
+      if(packet.body) bulkIn += packet.body;
       if(!chan.onBulk) return;
-      if(packet.js.err) return chan.onBulk(packet.js.err);
-      if(packet.js.end) chan.onBulk(false, bulkIn);
+      if(end) chan.onBulk(end!==true?end:false, bulkIn);
     }
     // handle (optional) outgoing bulk flow
     chan.bulk = function(data, callback)
@@ -185,7 +185,7 @@ exports.channelWraps = {
         data = data.substr(1000);
         var packet = {body:chunk};
         if(!data) packet.callback = callback; // last packet gets confirmed
-        chan.send();
+        chan.send(packet);
       }
       chan.end();
     }
