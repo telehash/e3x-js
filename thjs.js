@@ -696,6 +696,7 @@ function whois(hashname)
         }else{ // no ip address, must relay
           hn.relayAsk = true;
         }
+        // TODO, if we've tried+failed a peer already w/o a relay, add relay
         self.whois(via).peer(hn.hashname, hn.relayAsk); // send the peer request
       });
     }
@@ -1270,11 +1271,12 @@ function inConnect(err, packet, chan)
   // try the suggested paths
   if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return debug("bad path",JSON.stringify(path));
-    // if they are offering to provide a bridge, save that info for later as a fallback
+    // store any path as a possible one
+    to.possible[path.type] = path;
+    // if they are offering to provide a bridge, save that info for later after we have a line
     if(path.type == "bridge")
     {
       path.via = packet.from.hashname;
-      to.possible.bridge = path;
       return;
     }
     if(path.type == "relay") path.via = packet.from.hashname;
@@ -1429,7 +1431,7 @@ function inSeek(err, packet, chan)
 function inPath(err, packet, chan)
 {
   // check/try any alternate paths
-  if(Array.isArray(packet.js.alts)) packet.js.alts.forEach(function(path){
+  if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return; // invalid
     // don't send to ones we know about
     if(pathMatch(path, packet.from.paths)) return;
