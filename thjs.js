@@ -296,7 +296,7 @@ function meshPing(self)
 function bridge(to, callback)
 {
   var self = this;
-  debug("trying to start a bridge",to.hashname,JSON.stringify(to.possible),to.bridge);
+  debug("trying to start a bridge",to.hashname,JSON.stringify(to.possible));
   if(Object.keys(to.possible).length == 0) return callback(); // no possible paths to bridge to
 
   var found;
@@ -309,14 +309,14 @@ function bridge(to, callback)
     via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
       // TODO we can try another path and/or via?
       if(end !== true) debug("failed to create bridge",end,via.hashname);
-      callback((end==true)?packet.sender:false);
+      callback((end==true)?packet.sender:false, via);
     });    
   }
   
   // if there's a bridge volunteer for them already
   if(to.possible.bridge && to.possible.bridge.via) return start(self.whois(to.possible.bridge.via), to.possible.bridge);
 
-  // find any bridge seed
+  // find any bridge supporting seed
   Object.keys(self.seeds).forEach(function(seed){
     if(found) return;
     seed = self.seeds[seed];
@@ -324,6 +324,10 @@ function bridge(to, callback)
     found = true;
     start(seed);
   });
+
+  // worst case, blind attempt to bridge through the relay
+  if(!found && to.relay) return start(self.whois(to.relay.via));
+
   if(!found) return callback();
 }
 
@@ -493,7 +497,7 @@ function receive(msg, path)
 	  // a matching line is required to decode the packet
 	  if(!line) {
 	    if(!self.bridges[packet.js.line]) return debug("unknown line received", packet.js.line, JSON.stringify(packet.sender));
-      debug("BRIDGE",JSON.stringify(self.bridges[packet.js.line]));
+      debug("BRIDGE",JSON.stringify(self.bridges[packet.js.line]),packet.js.line);
       if(self.bridgeIVs[packet.js.iv]) return; // drop duplicates
       self.bridgeIVs[packet.js.iv] = true;
       // flat out raw retransmit any bridge packets
@@ -561,21 +565,23 @@ function whois(hashname)
       debug("relay incoming",hn.hashname,JSON.stringify(path));
       hn.relay = path; // set new default relay
       hn.alive = false; // a new relay is a red flag
-      // trigger sync whenever a relay is added (slightly delayed so other stuff can happen first)
+      // trigger sync whenever a relay is added (slightly delayed so other internal async stuff can happen first)
       var started = Date.now();
       setTimeout(function(){
+        debug("relay only, trying sync",hn.hashname);
         hn.sync(function(){
           // if we found another path, yay
-          if(hn.alive) return;
+          if(hn.alive) return debug("relay upgraded, now alive",hn.hashname);
           // only relay yet, try to create a bridge
-          self.bridge(hn, function(pathin){
+          self.bridge(hn, function(pathin, via){
+            debug("BRIDGING",hn.hashname,pathin,via&&via.hashname);
             if(!pathin) return debug("no bridge");
+            hn.bridge = via.hashname;
             // experimentally send direct via the bridge path now
-            debug("BRIDGING",hn.hashname,pathin);
             hn.raw("path",{js:{priority:0},direct:pathin}, inPath);
           });
         })
-      },1000);
+      },10);
       return path;
     }
     
@@ -589,6 +595,9 @@ function whois(hashname)
       // store a new path
       hn.paths.push(path);
       match = path;
+
+      // if bridging, and this path is from the bridge, flag it for lower priority
+      if(hn.bridge && pathMatch(path, self.whois(hn.bridge).paths)) path.priority = -1;
 
       // always default to minimum 0 here
       if(typeof path.priority != "number") path.priority = 0;
@@ -1296,12 +1305,21 @@ function inPeer(err, packet, chan)
   function push(path)
   {
     if(pathMatch(path, js.paths)) return;
-    if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal) return; // only send local paths
-    path = JSON.parse(JSON.stringify(path)); // clone
+
+    // if the path is a local ip and the destination isn't, offer to bridge it instead
+    if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal)
+    {
+      path = {type:"bridge",id:packet.from.hashname,local:true};
+    }
+
     // TODO refactor how we overload paths, poor form
+    path = JSON.parse(JSON.stringify(path)); // clone
     delete path.priority;
     delete path.lastIn;
     delete path.lastOut;
+
+    // if we send a bridge suggestion, flag so we will actually bridge for them
+    if(path.type == "bridge") peer.bridging = true;
     js.paths.push(path)
   }
   
@@ -1420,7 +1438,11 @@ function inPath(err, packet, chan)
   if(err) return; // bye bye bye!
   
   // need to respond, prioritize everything above relay
-  var priority = (packet.sender.type == "relay") ? 0 : 1;
+  var priority = (packet.sender.type == "relay") ? 0 : 2;
+
+  // if bridging, and this path is from the bridge, flag it for lower priority
+  if(packet.from.bridge && pathMatch(packet.sender, self.whois(packet.from.bridge).paths)) priority = 1;
+
   chan.send({js:{end:true, priority:priority}});
 }
 
@@ -1435,6 +1457,18 @@ function inBridge(err, packet, chan)
 
   // must be allowed either globally or per hashname
   if(!self.bridging && !packet.from.bridging) return chan.send({js:{err:"not allowed"}});
+  
+  // special bridge path for local ips must be "resolved" to their real path
+  if(packet.js.path.type == "bridge" && packet.js.path.local == true)
+  {
+    var local;
+    var to = self.whois(packet.js.path.id);
+    if(to) to.paths.forEach(function(path){
+      if(isLocalIP(path.ip)) local = path;
+    });
+    if(!local) return chan.send({js:{err:"invalid path"}});
+    packet.js.path = local;
+  }
 
   if(!packet.from.bridges) packet.from.bridges = {};
   packet.from.bridges[packet.js.to] = packet.from.bridges[packet.js.from] = true; // so we can clean up entries at some point
