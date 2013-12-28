@@ -66,7 +66,7 @@ exports.hashname = function(key, send, args)
     }
     // hand rest to the external sending function passed in
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,JSON.stringify(path),to&&to.hashname);
-	  send(path, msg);
+	  send(path, msg, to);
 	};
   self.pathSet = function(path)
   {
@@ -238,9 +238,9 @@ exports.channelWraps = {
       }
     }
     // set up TS object for external use
-    chan.socket.readyState = 0;
+    chan.socket.readyState = chan.lastIn ? 1 : 0; // if channel was already active, set state 1
     chan.socket.send = function(data, callback){
-      if(chan.socket.readyState != 1) return false;
+      if(chan.socket.readyState != 1) return debug("sending fail to TS readyState",chan.socket.readyState)&&false;
       // chunk it
       while(data)
       {
@@ -253,6 +253,7 @@ exports.channelWraps = {
           packet.callback = callback;
           packet.js.done = true;
         }
+        debug("TS SEND",chunk.length,packet.js.done);
         chan.send(packet);
       }
     }
@@ -624,7 +625,7 @@ function whois(hashname)
   // manage network information consistently, called on all validated incoming packets
   hn.pathIn = function(path)
   {
-    if(["ipv4","ipv6","http","bridge","relay"].indexOf(path.type) == -1)
+    if(["ipv4","ipv6","http","bridge","relay","webrtc"].indexOf(path.type) == -1)
     {
       warn("unknown path type", JSON.stringify(path));
       return path;
@@ -682,6 +683,9 @@ function whois(hashname)
       
       // track overall if we trust them as local
       if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip)) hn.isLocal = true;
+
+      // track overall if they are connected via a public IP network
+      if(path.type.indexOf("ip") == 0 && !isLocalIP(path.ip)) hn.isPublic = true;
     }
     
     // track last active timestamp
@@ -860,6 +864,7 @@ function whois(hashname)
     if(self.paths.pub4) js.paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
     if(self.paths.pub6) js.paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
     if(self.paths.http) js.paths.push({type:"http", http:self.paths.http.http});
+    // note: don't include webrtc since it's private and done during a path sync
     if(hn.isLocal)
     {
       if(self.paths.lan4) js.paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
@@ -916,7 +921,7 @@ function whois(hashname)
     var paths = hn.paths.slice();
     if(!hn.alive && hn.relay) paths.push(hn.relay);
 
-    // empty. fail the line and reset the hn
+    // empty. TODO should we do something?
     if(paths.length == 0) return callback();
 
     // check all paths at once
@@ -931,7 +936,9 @@ function whois(hashname)
       if(!types.ipv4 && self.paths.pub4) alts.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
       if(!types.ipv6 && self.paths.pub6) alts.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
       // if we support http path too
-      if(self.paths.http) alts.push({type:"http",http:self.paths.http.http});
+      if(!types.http && self.paths.http) alts.push({type:"http",http:self.paths.http.http});
+      // if we support webrtc
+      if(!types.webrtc && self.paths.webrtc) alts.push({type:"webrtc", id:local.randomHEX(16)});
       // include local ip/port if we're relaying to them
       if(hn.relayAsk == "local")
       {
@@ -1172,6 +1179,7 @@ function channel(type, arg, callback)
 
     // in errored state, only/always reply with the error and drop
     if(chan.errored) return chan.send(chan.errored);
+    if(!packet.js.end) chan.lastIn = Date.now();
 
 	  // process any valid newer incoming ack/miss
 	  var ack = parseInt(packet.js.ack);
@@ -1235,9 +1243,8 @@ function channel(type, arg, callback)
     if(!packet && chan.inq.length > 0) chan.forceAck = true;
     if(!packet) return;
     chan.handling = true;
-    var err = packet.js.err||packet.js.end;
     if(!chan.safe) packet.js = packet.js._ || {}; // unescape all content json
-    chan.callback(err, packet, chan, function(){
+    chan.callback(packet.js.end, packet, chan, function(){
       chan.inq.shift();
       chan.inDone++;
       chan.handling = false;
@@ -1355,13 +1362,10 @@ function inConnect(err, packet, chan)
     if(typeof path.type != "string") return debug("bad path",JSON.stringify(path));
     // store any path as a possible one
     to.possible[path.type] = path;
-    // if they are offering to provide a bridge, save that info for later after we have a line
-    if(path.type == "bridge")
-    {
-      path.via = packet.from.hashname;
-      return;
-    }
-    if(path.type == "relay") path.via = packet.from.hashname;
+    // if they are offering to provide assistance, stash the sender
+    if(["bridge","relay"].indexOf(path.type) >= 0) path.via = packet.from.hashname;
+    // ignore types that you can't send to directly until you have a line
+    if(["bridge","webrtc"].indexOf(path.type) >= 0) return;
     to.sentOpen = sentOpen; // restore throttling var since these are all bunched together, could be refactored better as a batch
     to.open(path);
   });
@@ -1381,43 +1385,51 @@ function inPeer(err, packet, chan)
   // send a single lossy packet
   var js = {type:"connect", end:true, c:local.randomHEX(16)};
 
-  // load/cleanse/index any incoming paths
-  js.paths = [];
-  if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
-    if(typeof path.type != "string") return;
-    if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal) return; // don't pass along local paths
-    if(path.type == "relay" && packet.sender.type == "relay") return; // don't double-relay
-    js.paths.push(path);
-  });
-
-  // insert a path if none matching and clean up our local variables
-  function push(path)
+  // sanity on incoming paths array
+  if(!Array.isArray(packet.js.paths)) packet.js.paths = [];
+  
+  // insert in incoming IP path, TODO refactor how we overload paths, poor form
+  if(packet.sender.type.indexOf("ip") == 0)
   {
-    if(pathMatch(path, js.paths)) return;
-
-    // if the path is a local ip and the destination isn't, offer to bridge it instead
-    if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal)
-    {
-      path = {type:"bridge",id:packet.from.hashname,local:true};
-    }
-
-    // TODO refactor how we overload paths, poor form
-    path = JSON.parse(JSON.stringify(path)); // clone
+    var path = JSON.parse(JSON.stringify(packet.sender)); // clone
     delete path.priority;
     delete path.lastIn;
     delete path.lastOut;
-
-    // if we send a bridge suggestion, flag so we will actually bridge for them
-    if(path.type == "bridge") peer.bridging = true;
-    js.paths.push(path)
+    packet.js.paths.push(path);    
   }
   
-  // try to include the sending path, will include the bridge if that's the sender
-  push(packet.sender);
-  
-  // if none or bridge only, include a relay (if not relaying already)
-  if((js.paths.length == 0 || (js.paths.length == 1 && js.paths[0].type == "bridge")) && packet.sender.type != "relay") js.paths.push({type:"relay", id:local.randomHEX(16)});
+  // load/cleanse all paths
+  js.paths = [];
+  var hasRelay;
+  packet.js.paths.forEach(function(path){
+    if(typeof path.type != "string") return;
+    if(path.type == "relay" && packet.sender.type == "relay") return; // don't signal double-relay
+    if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal) return; // don't pass along local paths to public
+    if(path.type == "relay") hasRelay = true;
+    js.paths.push(path);
+  });
 
+  // look for a "viable" IP path between the two
+  var viable = false;
+  js.paths.forEach(function(path1){
+    peer.paths.forEach(function(path2){
+      if(path1.type != path2.type) return;
+      if(path1.type.indexOf("ip") != 0) return; // only IP paths
+      if(isLocalIP(path1.ip) != isLocalIP(path2.ip)) return; // must both be local or public
+      viable = [path1,path2];
+    });
+  });
+  debug("peer viable path results",JSON.stringify(viable));
+
+  // when no viable path, always offer to bridge/relay
+  if(!viable)
+  {
+    peer.bridging = true;
+    js.paths.push({type:"bridge",id:packet.from.hashname,local:true});
+    // add relay if none yet, and isn't via one already
+    if(!hasRelay && packet.sender.type != "relay") js.paths.push({type:"relay", id:local.randomHEX(16)});
+  }
+  
   // must bundle the senders der so the recipient can open them
   peer.send({js:js, body:packet.from.der});
 }
@@ -1547,13 +1559,15 @@ function inBridge(err, packet, chan)
   // must be allowed either globally or per hashname
   if(!self.bridging && !packet.from.bridging) return chan.send({js:{err:"not allowed"}});
   
-  // special bridge path for local ips must be "resolved" to their real path
+  // special bridge path for local ips must be "resolved" to a real path
   if(packet.js.path.type == "bridge" && packet.js.path.local == true)
   {
     var local;
     var to = self.whois(packet.js.path.id);
+    // just take the highest priority path
     if(to) to.paths.forEach(function(path){
-      if(isLocalIP(path.ip)) local = path;
+      if(!local) local = path;
+      if(path.priority > local.priority) local = path;
     });
     if(!local) return chan.send({js:{err:"invalid path"}});
     packet.js.path = local;
@@ -1585,7 +1599,7 @@ function inTS(err, packet, chan, callback)
   // create the socket and hand back to app
   chan.wrap("TS");
   self.TSockets[packet.js.path](chan.socket);
-  chan.send({js:{ok:true}});
+  chan.send({js:{open:true}});
 }
 
 // type lan, looking for a local seed
@@ -1671,6 +1685,8 @@ function pathMatch(path1, paths)
       if(path1.http == path2.http) match = path2;
       break;
     case "bridge":
+    case "relay":
+    case "webrtc":
       if(path1.id == path2.id) match = path2;
       break;
     }
