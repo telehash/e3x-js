@@ -4,12 +4,85 @@
 (function(exports) {
 
   // exported functions
-  exports.webrtc = PeerConnectionHandler;
+  exports.pch = PeerConnectionHandler;
+  exports.rtc = rtc;
+  exports.rtcAdd = rtcAdd;
+  
+  // rtc is a little wrapper to interface to an active switch to create a webrtc channel
+  function rtc(sw, arg)
+  {
+    var rtc = arg;
+    // dummy function to cache last packet
+    rtc.send = function(data)
+    {
+      rtc.cached = data;
+    }
+    
+    // initialize pch when needed
+    function init(flag) {
+      rtc.chan.wrap("TS");
+      rtc.pch = new thweb.pch({initiate:flag, _self:sw.hashname, _peer:rtc.chan.hashname});
+      rtc.pch.DEBUG = true;
+      rtc.chan.socket.onmessage = function(data) {
+        console.log("RTC IN", data);
+        try {
+          data = JSON.parse(data.data)
+        } catch (E) {
+          return log("rtc parse error", E, data.data)
+        }
+        rtc.pch.receiveSignal(data);
+      }
+      rtc.pch.onhavesignal = function(evt) {
+        console.log("RTC OUT", evt.signal, rtc.chan.socket);
+        rtc.chan.socket.send(JSON.stringify(evt.signal));
+      }
+      rtc.pch.onconnection = function() {
+        console.log("RTC CONNECTED");
+        rtc.send = function(data){
+          rtc.pch.sendMessage(forge.util.encode64(data));
+        }
+        if(rtc.cached)
+        {
+          rtc.send(rtc.cached);
+          delete rtc.cached;
+        }
+      }
+      rtc.pch.onreceivemessage = function(msg) {
+        if(msg && msg.data) me.receive(forge.util.decode64(msg.data),{type:"webrtc",id:rtc.id});
+      }
+    }
+
+    // either create a channel to them and init it
+    if(!rtc.chan) sw.whois(rtc.to).start("webrtc", {id:rtc.id, js:{}}, function(err, packet, chan, cb) {
+      cb();
+      if (err) return console.log("rtc error", err);
+      rtc.chan = chan;
+      init(true);
+    });
+
+    // or we got a channel passed in, wait for signal
+    if(rtc.chan) init(false);
+
+    return rtc;
+  }
 
   // PeerConnectionHandler extracted from code in https://github.com/natevw/PeerPouch
   var RTCPeerConnection = window.mozRTCPeerConnection || window.RTCPeerConnection || window.webkitRTCPeerConnection,
     RTCSessionDescription = window.mozRTCSessionDescription || window.RTCSessionDescription || window.webkitRTCSessionDescription,
     RTCIceCandidate = window.mozRTCIceCandidate || window.RTCIceCandidate || window.webkitRTCIceCandidate;
+
+  // add optional webrtc network support to a switch
+  function rtcAdd(sw, conns)
+  {
+    if(!RTCPeerConnection) return console.log("WebRTC support not found, disabled");
+    console.log("enabling WebRTC support");
+    sw.paths.webrtc = true;
+    sw.rels["webrtc"] = function(err, arg, chan, cb) {
+      cb();
+      chan.send({js:{open:true}});
+      conns[chan.id] = thweb.rtc(me, {chan:chan, id:chan.id});
+    }
+  }
 
   function PeerConnectionHandler(opts) {
     if(!opts) opts = {};
@@ -98,7 +171,7 @@
   };
 
   PeerConnectionHandler.prototype.sendMessage = function(data) {
-    if (!this._channel || this._channel.readyState !== 'open') throw Error("Connection exists, but data channel is not open.");
+    if (!this._channel || this._channel.readyState !== 'open') return handler.DEBUG && console.log("dropping data, no open channel");
     this._channel.send(data);
   };
 
