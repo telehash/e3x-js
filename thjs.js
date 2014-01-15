@@ -1034,7 +1034,7 @@ function seek(hn, callback)
     to.seek(hn.hashname, function(err, see){
       see.forEach(function(item){
         var sug = self.whois(item);
-        if(!sug) return warn("bad see",item,to.hashname);
+        if(!sug) return;
         sug.via(to, item);
         queue.push(sug.hashname);
       });
