@@ -520,8 +520,13 @@ function receive(msg, path)
     var from = self.whois(local.der2hn(open.rsa));
     if (!from) return warn("invalid hashname", local.der2hn(open.rsa), open.rsa);
 
-    // make sure this open is newer (if any others)
+    // make sure this open is legit
     if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
+    if(from.openAt)
+    {
+      if(open.js.at <= from.openAt) return; // ignore dups
+      from.sentOpen = 0; // make sure we send a new open
+    }
 
     // open is legit!
     debug("inOpen verified", from.hashname);
@@ -674,8 +679,8 @@ function whois(hashname)
       // always default to minimum 0 here
       if(typeof path.priority != "number") path.priority = 0;
 
-      // when multiple networks detected, trigger a sync
-      if(hn.paths.length > 1) hn.sync();
+      // when multiple networks detected, trigger a sync (delayed so caller can continue/respond first)
+      if(hn.paths.length > 1) setTimeout(hn.sync,1);
 
       // update public ipv4 address
       if(path.type == "ipv4" && !isLocalIP(path.ip)) hn.address = [hn.hashname,path.ip,path.port].join(",");
