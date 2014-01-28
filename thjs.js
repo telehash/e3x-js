@@ -13,10 +13,11 @@ defaults.chan_autoack = 1000; // is how often we auto ack if the app isn't gener
 defaults.chan_resend = 2000; // resend the last packet after this long if it wasn't acked in a durable channel
 defaults.chan_outbuf = 100; // max size of outgoing buffer before applying backpressure
 defaults.chan_inbuf = 50; // how many incoming packets to cache during processing/misses
-defaults.mesh_timer = 25*1000; // how often the DHT mesh maintenance runs, twice a minute, must be <1min to maintain NAT mappings
-defaults.nat_timeout = 60*1000; // nat timeout for inactivity
+defaults.nat_timeout = 120*1000; // nat timeout for inactivity
 defaults.idle_timeout = 5*60*1000; // overall inactivity timeout
-defaults.mesh_max = 250; // maximum number of nodes to maintain (minimum one packet per mesh timer)
+defaults.link_timer = 55*1000; // how often the DHT link maintenance runs
+defaults.link_max = 256; // maximum number of links to maintain overall (minimum one packet per link timer)
+defaults.link_k = 8; // maximum number of links to maintain per bucket
 
 // dependency functions
 var local;
@@ -28,7 +29,7 @@ exports.isHashname = function(hex)
 }
 
 // start a hashname listening and ready to go
-exports.hashname = function(key, send, args)
+exports.hashname = function(key, send)
 {
   if(!local) return warn("thjs.localize() needs to be called first");
   if(!key || !key.public || !key.private) return warn("bad args to hashname, requires key.public and key.private");
@@ -36,13 +37,13 @@ exports.hashname = function(key, send, args)
   if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
   // configure defaults
-  if(!args) args = {};
   var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}, TSockets:{}};
   self.private = local.pri2key(key.private);
   self.public = local.pub2key(key.public);
   self.der = local.key2der(self.public);
   self.address = self.hashname = local.der2hn(self.der);
   self.nat = false;
+  self.seed = true;
 
   // udp socket stuff
   self.pcounter = 1;
@@ -75,7 +76,7 @@ exports.hashname = function(key, send, args)
     // if ip4 and local ip, set nat mode
     if(path.type == "ipv4") self.nat = isLocalIP(path.ip);
     // trigger pings if our address changed
-    if(updated) meshPing(self);
+    if(updated) linkMaint(self);
   }
   
   // need some seeds to connect to, addSeed({ip:"1.2.3.4", port:5678, public:"PEM"})
@@ -126,6 +127,7 @@ exports.hashname = function(key, send, args)
 	self.raws["relay"] = inRelay;
 	self.raws["path"] = inPath;
 	self.raws["bridge"] = inBridge;
+	self.raws["link"] = inLink;
 
   // primarily internal, to seek/connect to a hashname
   self.seek = seek;
@@ -264,20 +266,17 @@ exports.channelWraps = {
   }
 }
 
-// every 25 seconds do the maintenance work for peers
-function meshLoop(self)
+// do the maintenance work for links
+function linkLoop(self)
 {
   self.bridgeIVs = {}; // reset IV cache for any bridging
-  debug("MESHA")
-//  meshReap(self); // remove any dead ones, temporarily disabled due to node crypto compiled cleanup bug
-  meshElect(self); // which ones go into buckets
-  meshPing(self); // ping all of them
-  debug("MESHZ")
-  setTimeout(function(){meshLoop(self)}, defaults.mesh_timer);
+//  hnReap(self); // remove any dead ones, temporarily disabled due to node crypto compiled cleanup bug
+  linkMaint(self); // ping all of them
+  setTimeout(function(){linkLoop(self)}, defaults.link_timer);
 }
 
 // delete any defunct hashnames!
-function meshReap(self)
+function hnReap(self)
 {
   var hn;
   function del(why)
@@ -299,68 +298,17 @@ function meshReap(self)
   });
 }
 
-// drop hn into it's appropriate bucket
-function bucketize(self, hn)
+// every link that needs to be maintained, ping them
+function linkMaint(self)
 {
-  if(!hn.bucket) hn.bucket = dhash(self.hashname, hn.hashname);
-  if(!self.buckets[hn.bucket]) self.buckets[hn.bucket] = [];
-  if(self.buckets[hn.bucket].indexOf(hn) == -1) self.buckets[hn.bucket].push(hn);
-}
-
-// update which lines are elected to keep, rebuild self.buckets array
-function meshElect(self)
-{
-  // sort all lines into their bucket, rebuild buckets from scratch (some may be GC'd)
-  self.buckets = []; // sparse array, one for each distance 0...255
-  self.capacity = [];
-  Object.keys(self.lines).forEach(function(line){
-    bucketize(self, self.lines[line]);
-  });
-  debug("BUCKETS",Object.keys(self.buckets));
-  var spread = parseInt(defaults.mesh_max / Object.keys(self.buckets).length);
-  if(!(spread > 1)) spread = 1;
-
-  // each bucket only gets so many lines elected
+  // process every bucket
   Object.keys(self.buckets).forEach(function(bucket){
-    var elected = 0;
-    self.buckets[bucket].forEach(function(hn){
-      if(!hn.alive) return;
-      // TODO can use other health quality metrics to elect better/smarter ones
-      hn.elected = (elected++ <= spread) ? true : false;
+    // sort by age and send maintenance to only k links
+    var sorted = self.buckets[bucket].sort(function(a,b){ return a.age - b.age });
+    sorted.slice(0,defaults.link_k).forEach(function(hn){
+      if(!hn.linked || !hn.alive) return;
+      hn.linked.send({js:{seed:self.seed}});
     });
-    self.capacity[bucket] = spread - elected; // track any capacity left per bucket
-  });
-}
-
-// every line that needs to be maintained, ping them
-function meshPing(self)
-{
-  Object.keys(self.lines).forEach(function(line){
-    var hn = self.lines[line];
-    // have to be elected or a line with a channel open (app)
-    if(!(hn.elected || Object.keys(hn.chans).length > 0)) return;
-    // don't ping unless we'll go past the timeout
-    if(((Date.now() - hn.sentAt) + defaults.mesh_timer) < hn.timeout()) return;
-    // seek ourself to discover any new hashnames closer to us for the buckets, used recursively
-    function ping(to)
-    {
-      debug("mesh ping",to.bucket,to.hashname);
-      to.raw("seek", {js:{"seek":self.hashname}, timeout:3000}, function(err, packet){
-        if(!Array.isArray(packet.js.see)) return;
-        // load any sees to look for potential bucket candidates
-        packet.js.see.forEach(function(address){
-          var sug = self.whois(address);
-          if(!sug) return;
-          sug.via(to, address);
-          if(sug.bucket) return; // already bucketized
-          // if their bucket has capacity, ping them
-          sug.bucket = dhash(self.hashname, hn.hashname);
-          if(self.capacity[sug.bucket] === undefined) self.capacity[sug.bucket] = 3; // safe default for a new bucket
-          if(self.capacity[sug.bucket]-- >= 0) ping(sug);
-        });
-      });
-    }
-    ping(hn);
   });
 }
 
@@ -457,8 +405,7 @@ function online(callback)
   // ping lan
   self.lanToken = local.randomHEX(16);
   self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken}));
-  // start mesh maint
-  meshLoop(self);
+  linkLoop(self);
   // safely callback only once or when all seeds failed
   function done(err)
   {
@@ -551,7 +498,6 @@ function receive(msg, path)
     local.openline(from, open);
     debug("line open",from.hashname,from.lineOut,from.lineIn);
     self.lines[from.lineOut] = from;
-    bucketize(self, from); // add to their bucket
     
     // resend the last sent packet again
     if (from.lastPacket) {
@@ -611,6 +557,8 @@ function whois(hashname)
   hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], possible:{}, isAlive:0};
   hn.address = hashname;
   hn.at = Date.now();
+  hn.bucket = dhash(self.hashname, hashname);
+  if(!self.buckets[hn.bucket]) self.buckets[hn.bucket] = [];
 
   // to create a new channels to this hashname
   hn.start = channel;
@@ -844,20 +792,17 @@ function whois(hashname)
   // just make a seek request conveniently
   hn.seek = function(hashname, callback)
   {
-    var tries = 0;
-    function seek()
-    {
-      tries++;
-      if(tries == 4) callback("timed out", []);
-      if(tries > 3) return;
-      setTimeout(seek, 1000);
-      hn.raw("seek", {js:{"seek":hashname}}, function(err, packet, chan){
-        if(tries > 3) return; // already failed back
-        tries = 5; // prevent multiple callbacks
-        callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
-      });
-    }
-    seek();
+    hn.raw("seek", {retry:3, js:{"seek":hashname}}, function(err, packet, chan){
+      callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
+    });
+  }
+
+  // request a new link to them
+  hn.link = function()
+  {
+    var js = {seed:self.seed};
+    js.see = self.buckets[hn.bucket].map(function(hn){ return hn.address; }).slice(0,5);
+    hn.raw("link", {retry:3 js:js}, inLink);
   }
   
   // send a simple lossy peer request, don't care about answer
@@ -1066,7 +1011,7 @@ function raw(type, arg, callback)
 	hn.chans[chan.id] = chan;
   
   // raw channels always timeout/expire after the last sent/received packet
-  chan.timeout = arg.timeout||defaults.chan_timeout;
+  if(!arg.timeout) arg.timeout = defaults.chan_timeout;
   function timer()
   {
     if(chan.timer) clearTimeout(chan.timer);
@@ -1074,7 +1019,12 @@ function raw(type, arg, callback)
       if(!hn.chans[chan.id]) return; // already gone
       delete hn.chans[chan.id];
       chan.callback("timeout",{js:{err:"timeout"}},chan);
-    }, chan.timeout);
+    }, arg.timeout);
+  }
+  chan.timeout = function(timeout)
+  {
+    arg.timeout = timeout;
+    timer();
   }
 
   chan.hashname = hn.hashname; // for convenience
@@ -1087,6 +1037,7 @@ function raw(type, arg, callback)
     // if err'd or ended, delete ourselves
     if(packet.js.err || packet.js.end) delete hn.chans[chan.id];
     chan.last = packet.sender; // cache last received network
+    chan.recvAt = Date.now();
     chan.callback(packet.js.err||packet.js.end, packet, chan);
     timer();
   }
@@ -1097,6 +1048,7 @@ function raw(type, arg, callback)
     if(!packet.js) packet.js = {};
     packet.js.c = chan.id;
     debug("SEND",chan.type,JSON.stringify(packet.js));
+    chan.sentAt = Date.now();
     if(!packet.to && chan.last) packet.to = chan.last; // always send back to the last received for this channel
     hn.send(packet);
     // if err'd or ended, delete ourselves
@@ -1112,6 +1064,19 @@ function raw(type, arg, callback)
   {
     arg.js.type = type;
     chan.send(arg);
+    // retry if asked to
+    if(arg.retry)
+    {
+      var at = 1000;
+      function retry(){
+        if(chan.recvAt) return; // means we received a packet
+        chan.send(arg);
+        if(at < 4000) at *= 2;
+        arg.retry--;
+        if(arg.retry) setTimeout(retry, at);
+      };
+      setTimeout(retry, at);
+    }
   }
   
   return chan;		
@@ -1517,11 +1482,81 @@ function nearby(hashname)
 function inSeek(err, packet, chan)
 {
   if(err) return;
-  if(!isHEX(packet.js.seek, 64)) return warn("invalid seek of ", packet.js.seek, "from:", packet.from.address);
+  if(!isHEX(packet.js.seek)) return warn("invalid seek of ", packet.js.seek, "from:", packet.from.address);
+  var self = packet.from.self;
+  var seek = packet.js.seek;
 
-  // now see if we have anyone to recommend
-  var answer = {end:true, see:packet.from.self.nearby(packet.js.seek).filter(function(hn){return hn.address;}).map(function(hn){ return hn.address; }).slice(0,5)};
+  var see = [];
+  var seen = {};
+
+  // first, include any exact matches
+  Object.keys(self.lines).forEach(function(line){
+    if(self.lines[line].hashname.substr(seek.length) != packet.js.seek) return;
+    see.push(self.lines[line].address);
+    seen[self.lines[line].hashname] = true;
+  });
+
+  // now see if we have any seeds to add
+  var bucket = dhash(self.hashname, packet.js.seek);
+  var seeds = self.buckets[bucket] ? self.buckets[bucket].filter(function(hn){ return hn.seed }) : [];
+  // sort by distance
+  seeds.sort(function(a,b){ return dhash(seek,a.hashname) - dhash(seek,b.hashname)}).forEach(function(seed){
+    if(!seen[seed.hashname]) see.push(seed.address);
+  });
+
+  var answer = {end:true, see:see.slice(0,5)};
   chan.send({js:answer});
+}
+
+// accept a dht link
+function inLink(err, packet, chan)
+{
+  if(err) return;
+  var self = packet.from.self;
+  chan.timeout(defaults.nat_timeout);
+
+  // send a response if this is a new incoming
+  if(!chan.sentAt)
+  {
+    var js = {seed:self.seed};
+    js.see = self.buckets[packet.from.bucket].map(function(hn){ return hn.address; }).slice(0,5);
+    // TODO, check link_max and end it or evict another
+    chan.send({js:js});
+  }
+  
+  // look for any see and check to see if we should create a link
+  if(Array.isArray(packet.js.see)) packet.js.see.forEach(function(address){
+    var hn = self.whois(address);
+    if(self.buckets[hn.bucket].length < defaults.link_k) hn.link();
+  });
+
+  // add in this link
+  packet.from.age = Date.now();
+  packet.from.linked = chan;
+  packet.from.seed = packet.js.seed;
+  if(self.buckets[hn.bucket].indexOf(hn) == -1) self.buckets[hn.bucket].push(hn);
+  
+  // let mainteanance handle
+  chan.handler = inMaintenance;
+}
+
+function inMaintenance(err, packet, chan)
+{
+  // ignore if this isn't the main link
+  if(!packet.from.linked || packet.from.linked != chan) return;
+  if(err)
+  {
+    delete packet.from.linked;
+    var index = self.buckets[packet.from.bucket].indexOf(packet.from);
+    if(index > -1) self.buckets[packet.from.bucket].splice(index,1);
+    return;
+  }
+
+  // update seed status
+  packet.from.seed = packet.js.seed;
+
+  // only send a response if we've not sent one in a while
+  if((Date.now() - chan.sentAt) > defaults.link_timer) chan.send({js:{seed:packet.from.self.seed}});
 }
 
 // update/respond to network state
