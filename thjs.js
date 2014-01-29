@@ -134,9 +134,6 @@ exports.hashname = function(key, send)
   self.via = myVia;
   self.bridge = bridge;
   
-  // return array of closest known hashname objects
-  self.nearby = nearby;
-
   return self;
 }
 
@@ -928,13 +925,22 @@ function seek(hn, callback)
   var did = {};
   var doing = {};
   var queue = [];
+  var wise = {};
   var closest = 255;
   
-  // load up who we know closest
-  self.nearby(hn.hashname).forEach(function(near){
-    if(near === hn) return; // ignore the one we're (re)seeking
-    if(queue.indexOf(near.hashname) == -1) queue.push(near.hashname);
+  // load all seeds and sort to get the top 3
+  var seeds = []
+  Object.keys(self.buckets).forEach(function(bucket){
+    self.buckets[bucket].forEach(function(link){
+      if(link.hashname == hn) return; // ignore the one we're (re)seeking
+      if(link.seed) seeds.push(link);
+    });
   });
+  seeds.sort(function(a,b){ return dhash(hn.hashname,a.hashname) - dhash(hn.hashname,b.hashname) }).slice(0,3).forEach(function(seed){
+    wise[seed.hashname] = true;
+    queue.push(seed.hashname);
+  });
+  
   debug("seek starting with",queue);
 
   // always process potentials in order
@@ -944,7 +950,6 @@ function seek(hn, callback)
       return dhash(hn.hashname,a) - dhash(hn.hashname,b)
     });
   }
-  sort();
 
   // track when we finish
   function done(err)
@@ -978,13 +983,15 @@ function seek(hn, callback)
     if(did[mine] || doing[mine]) return onetime||loop();
     var distance = dhash(hn.hashname, mine);
     if(distance > closest) return onetime||loop(); // don't "back up" further away
-    if(!self.seeds[mine]) closest = distance; // update distance if not talking to a seed
+    if(wise[mine]) closest = distance; // update distance if trusted
     doing[mine] = true;
     var to = self.whois(mine);
     to.seek(hn.hashname, function(err, see){
       see.forEach(function(item){
         var sug = self.whois(item);
         if(!sug) return;
+        // if this is the first entry and from a wise one, give them wisdom too
+        if(wise[to.hashname] && see.indexOf(item) == 0) wise[sug.hashname] = true;
         sug.via(to, item);
         queue.push(sug.hashname);
       });
@@ -1448,36 +1455,6 @@ function inRelay(err, packet, chan)
   to.send(packet);
 }
 
-// return array of nearby hashname objects
-function nearby(hashname)
-{
-  var self = this;
-  var ret = {};
-  
-  // return up to 5 closest, in the same or higher (further) bucket
-  var bucket = dhash(self.hashname, hashname);
-  while(bucket <= 255 && Object.keys(ret).length < 5)
-  {
-    if(self.buckets[bucket]) self.buckets[bucket].forEach(function(hn){
-      if(!hn.alive) return; // only see ones we have a line with
-      ret[hn.hashname] = hn;
-    });
-    bucket++;
-  }
-
-  // use any if still not full
-  if(Object.keys(ret).length < 5) Object.keys(self.lines).forEach(function(line){
-    if(Object.keys(ret).length >= 5) return;
-    if(!self.lines[line].alive) return;
-    ret[self.lines[line].hashname] = self.lines[line];
-  });
-  var reta = [];
-  Object.keys(ret).forEach(function(hn){
-    reta.push(ret[hn]);
-  });
-  return reta;
-}
-
 // return a see to anyone closer
 function inSeek(err, packet, chan)
 {
@@ -1489,22 +1466,29 @@ function inSeek(err, packet, chan)
   var see = [];
   var seen = {};
 
-  // first, include any exact matches
-  Object.keys(self.lines).forEach(function(line){
-    if(self.lines[line].hashname.substr(seek.length) != packet.js.seek) return;
-    see.push(self.lines[line].address);
-    seen[self.lines[line].hashname] = true;
-  });
-
-  // now see if we have any seeds to add
+  // see if we have any seeds to add
   var bucket = dhash(self.hashname, packet.js.seek);
-  var seeds = self.buckets[bucket] ? self.buckets[bucket].filter(function(hn){ return hn.seed }) : [];
-  // sort by distance
-  seeds.sort(function(a,b){ return dhash(seek,a.hashname) - dhash(seek,b.hashname)}).forEach(function(seed){
-    if(!seen[seed.hashname]) see.push(seed.address);
+  var links = self.buckets[bucket] ? self.buckets[bucket] : [];
+
+  // first, sort by age and add the most wise one
+  links.sort(function(a,b){ return a.age - b.age}).forEach(function(seed){
+    if(see.length) return;
+    if(!seed.seed) return;
+    see.push(seed.address);
+    seen[seed.hashname] = true;
   });
 
-  var answer = {end:true, see:see.slice(0,5)};
+  // sort by distance for more
+  links.sort(function(a,b){ return dhash(seek,a.hashname) - dhash(seek,b.hashname)}).forEach(function(link){
+    if(seen[link.hashname]) return;
+    if(link.seed || link.hashname.substr(seek.length) == seek)
+    {
+      see.push(link.address);
+      seen[link.hashname] = true;
+    }
+  });
+
+  var answer = {end:true, see:see.slice(0,8)};
   chan.send({js:answer});
 }
 
@@ -1683,16 +1667,17 @@ function dhash(h1, h2) {
   // convert to nibbles, easier to understand
   var n1 = hex2nib(h1);
   var n2 = hex2nib(h2);
-  if(!n1.length || n1.length != n2.length) return -1;
+  if(!n1.length || !n2.length) return -1;
   // compare nibbles
   var sbtab = [-1,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3];
   var ret = 252;
   for (var i = 0; i < n1.length; i++) {
-      var diff = n1[i] ^ n2[i];
-      if (diff) return ret + sbtab[diff];
-      ret -= 4;
+    if(!n2[i]) return ret;
+    var diff = n1[i] ^ n2[i];
+    if (diff) return ret + sbtab[diff];
+    ret -= 4;
   }
-  return -1; // samehash
+  return ret;
 }
 
 // convert hex string to nibble array
