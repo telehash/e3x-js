@@ -425,7 +425,7 @@ function online(callback)
     return done();
   }
 	self.seeds.forEach(function(seed){
-    seed.seek(self.hashname, function(err, see){
+    seed.link(function(err, see){
       if(Array.isArray(see)) see.forEach(function(item){
         self.via(seed, item); // myVia()
       });
@@ -797,11 +797,14 @@ function whois(hashname)
   }
 
   // request a new link to them
-  hn.link = function()
+  hn.link = function(callback)
   {
     var js = {seed:self.seed};
     js.see = self.buckets[hn.bucket].map(function(hn){ return hn.address; }).slice(0,5);
-    hn.raw("link", {retry:3 js:js}, inLink);
+    hn.raw("link", {retry:3, js:js}, function(err, packet, chan){
+      if(callback) callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
+      inLink(err, packet, chan);
+    });
   }
   
   // send a simple lossy peer request, don't care about answer
@@ -1520,7 +1523,7 @@ function inLink(err, packet, chan)
   packet.from.age = Date.now();
   packet.from.linked = chan;
   packet.from.seed = packet.js.seed;
-  if(self.buckets[hn.bucket].indexOf(hn) == -1) self.buckets[hn.bucket].push(hn);
+  if(self.buckets[packet.from.bucket].indexOf(packet.from) == -1) self.buckets[packet.from.bucket].push(packet.from);
   
   // let mainteanance handle
   chan.handler = inMaintenance;
@@ -1659,7 +1662,7 @@ function inLanSeed(self, packet)
 function isHEX(str, len)
 {
   if(typeof str !== "string") return false;
-  if(str.length !== len) return false;
+  if(len && str.length !== len) return false;
   if(str.replace(/[a-f0-9]+/i, "").length !== 0) return false;
   return true;
 }
