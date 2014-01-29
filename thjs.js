@@ -789,7 +789,9 @@ function whois(hashname)
   // just make a seek request conveniently
   hn.seek = function(hashname, callback)
   {
-    hn.raw("seek", {retry:3, js:{"seek":hashname}}, function(err, packet, chan){
+    var bucket = dhash(hn.hashname, hashname);
+    var prefix = hashname.substr(0, Math.ceil((255-bucket)/4)+2);
+    hn.raw("seek", {retry:3, js:{"seek":prefix}}, function(err, packet, chan){
       callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
     });
   }
