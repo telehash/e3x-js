@@ -1534,6 +1534,7 @@ function inMaintenance(err, packet, chan)
 {
   // ignore if this isn't the main link
   if(!packet.from || !packet.from.linked || packet.from.linked != chan) return;
+  var self = packet.from.self;
   if(err)
   {
     delete packet.from.linked;
@@ -1546,7 +1547,7 @@ function inMaintenance(err, packet, chan)
   packet.from.seed = packet.js.seed;
 
   // only send a response if we've not sent one in a while
-  if((Date.now() - chan.sentAt) > Math.ceil(defaults.link_timer/2)) chan.send({js:{seed:packet.from.self.seed}});
+  if((Date.now() - chan.sentAt) > Math.ceil(defaults.link_timer/2)) chan.send({js:{seed:self.seed}});
 }
 
 // update/respond to network state
