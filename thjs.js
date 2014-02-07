@@ -29,19 +29,29 @@ exports.isHashname = function(hex)
 }
 
 // start a hashname listening and ready to go
-exports.hashname = function(key, send)
+exports.hashname = function(keys, send)
 {
   if(!local) return warn("thjs.localize() needs to be called first");
-  if(!key || !key.public || !key.private) return warn("bad args to hashname, requires key.public and key.private");
-  if(!local.pub2key(key.public) || !local.pri2key(key.private)) return warn("key.public and key.private must be valid pem strings");
+  if(!keys) return warn("bad args to hashname, requires keys");
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}, TSockets:{}};
+
+  if(keys.parts)
+  {
+    self.parts = keys.parts;
+    var err = local.loadkeys(self,keys);
+    if(err) return warn("failed to load keys: "+err);
+    self.address = self.hashname = local.parts2hn(self.parts);
+  }else{ // legacy
+    if(!keys.public || !keys.private) return warn("bad args to hashname, requires key.public and key.private");
+    if(!local.pub2key(keys.public) || !local.pri2key(keys.private)) return warn("key.public and key.private must be valid pem strings");    
+    self.private = local.pri2key(keys.private);
+    self.public = local.pub2key(keys.public);
+    self.der = local.key2der(self.public);
+    self.address = self.hashname = local.der2hn(self.der);
+  }
   if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
   // configure defaults
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}, TSockets:{}};
-  self.private = local.pri2key(key.private);
-  self.public = local.pub2key(key.public);
-  self.der = local.key2der(self.public);
-  self.address = self.hashname = local.der2hn(self.der);
   self.nat = false;
   self.seed = true;
 
