@@ -48,18 +48,26 @@ exports.parts2hn = function(parts)
 
 exports.loadkeys = function(id, keys)
 {
-  id.keys = {};
-  var err;
+  id.cs = {};
+  id.keys = {}; // for convenience
+  var err = false;
   Object.keys(id.parts).forEach(function(csid){
-    id.keys[csid] = {};
-    id.keys[csid].public = CS[csid].pub2key(keys[csid]) || (err = csid+" public failed");
-    id.keys[csid].private = CS[csid].pri2key(keys[csid+"p"]) || (err = csid+" private failed");
+    id.keys[csid] = keys[csid];
+    id.cs[csid] = {};
+    err = err||CS[csid].loadkey(id.cs[csid], keys[csid], keys[csid+"p"]);
   });
   return err;
 }
 
-exports.genkeys = function(sets,cbDone,cbStep)
+exports.loadkey = function(id, csid, key)
 {
+  id.csid = csid;
+  return CS[csid].loadkey(id, key);
+}
+
+exports.genkeys = function(cbDone,cbStep,sets)
+{
+  if(!sets) sets = {"0":true,"8":true}; // default sets to create
   var ret = {parts:{}};
   var todo = Object.keys(sets).filter(function(csid){ return CS[csid];});
   if(todo.length == 0) return cbDone("no sets supported");
@@ -76,33 +84,31 @@ exports.genkeys = function(sets,cbDone,cbStep)
 CS["0"].genkey = function(ret,cbDone,cbStep)
 {
   var k = ecKey_0();
-  ret["0"] = forge.util.bytesToHex(k.public.uncompressed);
-  ret["0p"] = forge.util.bytesToHex(k.private.uncompressed);
+  ret["0"] = forge.util.encode64(k.public.uncompressed);
+  ret["0p"] = forge.util.encode64(k.private.uncompressed);
   ret.parts["0"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
   cbDone();
 }
 
-CS["0"].pub2key = function(pub)
+CS["0"].loadkey = function(id, pub, priv)
 {
-  var bytes = (pub.length == 41) ? pub : forge.util.decode64(pub);
+  id.key = (pub.length == 41) ? pub : forge.util.decode64(pub);
   var curve = getSECCurveByName("secp160r1").getCurve();
-  var uncompressed = forge.util.createBuffer(bytes);
+  var uncompressed = forge.util.createBuffer(id.key);
   uncompressed.getByte(); // chop off the 0x04
   var x = uncompressed.getBytes(20);
   var y = uncompressed.getBytes(20);
-  if(y.length != 20) return false;
-  var P = new ECPointFp(curve,
+  if(y.length != 20) return "wrong size";
+  id.public = new ECPointFp(curve,
     curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(x), 16)),
     curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(y), 16)));
-  return P;
+  if(priv)
+  {
+    var bytes = (priv.length == 20) ? priv : forge.util.decode64(priv);
+    id.private = new BigInteger(forge.util.bytesToHex(bytes), 16);    
+  }
+  return false;
 }
-
-CS["0"].pri2key = function(pri)
-{
-  var bytes = (pri.length == 20) ? pri : forge.util.decode64(pri);
-  return new BigInteger(forge.util.bytesToHex(bytes), 16);
-}
-
 
 CS["8"].genkey = function(ret,cbDone,cbStep)
 {
@@ -122,8 +128,13 @@ CS["8"].genkey = function(ret,cbDone,cbStep)
 	setTimeout(step);  
 }
 
-CS["8"].pub2key = pub2key;
-CS["8"].pri2key = pri2key;
+CS["8"].loadkey = function(id, pub, priv)
+{
+  id.public = pub2key(pub);
+  id.key = key2der(id.public);
+  if(priv) id.private = pri2key(priv);
+  return false;
+}
 
 function genkey(cbDone, cbStep) {
   var state = rsa.createKeyPairGenerationState(2048, 0x10001);
@@ -222,7 +233,6 @@ function ecKey_0()
 	var r = new BigInteger(n.bitLength(), new SecureRandom());
 	var priecc = r.mod(n1).add(BigInteger.ONE);
 	priecc.uncompressed = forge.util.hexToBytes(unstupid(priecc.toString(16),40));
-	console.log(priecc);
 
 	//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
 	//console.log(G);

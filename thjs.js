@@ -39,7 +39,7 @@ exports.hashname = function(keys, send)
   {
     self.parts = keys.parts;
     var err = local.loadkeys(self,keys);
-    if(err) return warn("failed to load keys: "+err);
+    if(err) return warn("failed to load keys",err);
     self.address = self.hashname = local.parts2hn(self.parts);
   }else{ // legacy
     if(!keys.public || !keys.private) return warn("bad args to hashname, requires key.public and key.private");
@@ -86,7 +86,7 @@ exports.hashname = function(keys, send)
     // if ip4 and local ip, set nat mode
     if(path.type == "ipv4") self.nat = isLocalIP(path.ip);
     // trigger pings if our address changed
-    if(!updated)
+    if(self.isOnline && !updated)
     {
       debug("local network updated, checking links")
       linkMaint(self);
@@ -312,11 +312,11 @@ function hnReap(self)
 // every link that needs to be maintained, ping them
 function linkMaint(self)
 {
-  debug("link maintenance on buckets",Object.keys(self.buckets).join(","));
   // process every bucket
   Object.keys(self.buckets).forEach(function(bucket){
     // sort by age and send maintenance to only k links
     var sorted = self.buckets[bucket].sort(function(a,b){ return a.age - b.age });
+    debug("link maintenance on bucket",bucket,sorted.join(","));
     sorted.slice(0,defaults.link_k).forEach(function(hn){
       if(!hn.linked || !hn.alive) return;
       if((Date.now() - hn.linked.recvAt) < Math.ceil(defaults.link_timer/2)) return; // they ping'd us already recently
@@ -366,6 +366,26 @@ function bridge(to, callback)
 
 function addSeed(arg) {
   var self = this;
+  if(arg.parts)
+  {
+    var csid = partsMatch(self.parts,arg.parts);
+    if(!csid) return warn("no matching parts",arg);
+    var seed = self.whois(local.parts2hn(arg.parts));
+    if(!seed || !arg.keys) return warn("invalid seed info",arg);
+    seed.parts = arg.parts;
+    var err;
+    if(err = local.loadkey(seed, csid, arg.keys[csid])) return warn("failed to load key",arg.keys[csid],err);
+    if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
+      if(pathMatch(path, seed.paths)) return;
+      seed.paths.push(path);
+    });
+    if(arg.bridge) seed.bridging = true;
+    seed.isSeed = true;
+    self.seeds.push(seed);
+    return;
+  }
+  
+  // legacy format
   if(!arg.pubkey) return warn("invalid args to addSeed");
   var der = local.key2der(arg.pubkey);
   var seed = self.whois(local.der2hn(der));
@@ -395,6 +415,7 @@ function addSeed(arg) {
 function online(callback)
 {
 	var self = this;
+  self.isOnline = true;
   // ping lan
   self.lanToken = local.randomHEX(16);
   self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken}));
@@ -1643,7 +1664,6 @@ function inTS(err, packet, chan, callback)
   var self = packet.from.self;
   callback();
 
-  console.log("INTS",packet.js);
   // ensure valid request
   if(typeof packet.js.path != "string" || !self.TSockets[packet.js.path]) return chan.err("unknown path");
   
@@ -1743,6 +1763,15 @@ function pathMatch(path1, paths)
     }
   });
   return match;
+}
+
+function partsMatch(parts1, parts2)
+{
+  if(typeof parts1 != "object" || typeof parts2 != "object") return false;
+  var ids = Object.keys(parts1).sort(function(a,b){return b-a});
+  var csid;
+  while(csid = ids.shift()) if(parts2[csid]) return csid;
+  return false;
 }
 
 // return if an IP is local or public
