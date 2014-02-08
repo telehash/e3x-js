@@ -426,23 +426,23 @@ function online(callback)
   var dones = self.seeds.length;
   if(!dones) {
     warn("no seeds");
-    return callback();
+    return callback(null,0);
   }
 
   // safely callback only once or when all seeds return
   function done()
   {
     if(!dones) return; // already called back
-    // success!
-    if(Date.now() - self.recvAt < 1000)
+    var alive = self.seeds.filter(function(seed){return seed.alive}).length;
+    if(alive)
     {
-      callback();
+      callback(null,alive);
       dones = 0;
       return;
     }
     dones--;
     // failed
-    if(!dones) callback("offline");
+    if(!dones) callback("offline",0);
   }
 
 	self.seeds.forEach(function(seed){
@@ -823,7 +823,7 @@ function whois(hashname)
   // force send an open packet, direct overrides the network
   hn.open = function(direct)
   {
-    if(!hn.der) return; // can't open if no key
+    if(!hn.key) return; // can't open if no key
     if(!direct && hn.paths.length == 0 && hn.unpaths.length == 0) return debug("can't open, no paths");
     // don't send again if we've sent one in the last few sec, prevents connect abuse
     if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;

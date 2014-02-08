@@ -83,7 +83,7 @@ exports.genkeys = function(cbDone,cbStep,sets)
 
 CS["0"].genkey = function(ret,cbDone,cbStep)
 {
-  var k = ecKey_0();
+  var k = ecKey("secp160r1",20);
   ret["0"] = forge.util.encode64(k.public.uncompressed);
   ret["0p"] = forge.util.encode64(k.private.uncompressed);
   ret.parts["0"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
@@ -202,76 +202,61 @@ function unstupid(hex,len)
 	return (hex.length >= len) ? hex : unstupid("0"+hex,len);
 }
 
-function ecKey()
+function ecKey(curve, bytes)
 {
-	var c = getSECCurveByName("secp256r1");
+	var c = getSECCurveByName(curve);
 	//var curve = new ECCurveFp(c.getCurve().getQ(), c.getCurve().getA().toBigInteger(), c.getCurve().getB().toBigInteger());
 	//console.log(curve);
 	var n = c.getN();
 	var n1 = n.subtract(BigInteger.ONE);
 	var r = new BigInteger(n.bitLength(), new SecureRandom());
 	var priecc = r.mod(n1).add(BigInteger.ONE);
+	priecc.uncompressed = forge.util.hexToBytes(unstupid(priecc.toString(16),bytes*2));
 	//console.log(priecc);
 
 	//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
 	//console.log(G);
 	var P = c.getG().multiply(priecc);
-	var pubhex = "04"+unstupid(P.getX().toBigInteger().toString(16),64)+unstupid(P.getY().toBigInteger().toString(16),64);
+	var pubhex = "04"+unstupid(P.getX().toBigInteger().toString(16),bytes*2)+unstupid(P.getY().toBigInteger().toString(16),bytes*2);
 	P.uncompressed = forge.util.hexToBytes(pubhex);
 	//console.log(forge.util.createBuffer(forge.util.hexToBytes(P.getX().toBigInteger().toString(16))).toHex());
 //  console.log(P.uncompressed.length,pubhex,forge.util.bytesToHex(P.uncompressed));
 	return {curve:c, private:priecc, public:P};
 }
-
-function ecKey_0()
-{
-	var c = getSECCurveByName("secp160r1");
-	//var curve = new ECCurveFp(c.getCurve().getQ(), c.getCurve().getA().toBigInteger(), c.getCurve().getB().toBigInteger());
-	//console.log(curve);
-	var n = c.getN();
-	var n1 = n.subtract(BigInteger.ONE);
-	var r = new BigInteger(n.bitLength(), new SecureRandom());
-	var priecc = r.mod(n1).add(BigInteger.ONE);
-	priecc.uncompressed = forge.util.hexToBytes(unstupid(priecc.toString(16),40));
-
-	//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
-	//console.log(G);
-	var P = c.getG().multiply(priecc);
-	var pubhex = "04"+unstupid(P.getX().toBigInteger().toString(16),40)+unstupid(P.getY().toBigInteger().toString(16),40);
-	P.uncompressed = forge.util.hexToBytes(pubhex);
-	//console.log(forge.util.createBuffer(forge.util.hexToBytes(P.getX().toBigInteger().toString(16))).toHex());
-//  console.log(P.uncompressed.length,pubhex,forge.util.bytesToHex(P.uncompressed));
-	return {curve:c, private:priecc, public:P};
-}
-
 
 
 function openize(id, to)
 {
-  if(id.parts && to.parts)
+  if(!to.csid)
   {
-    var part;
-    Object.keys(parts).sort(function(a,b){return a-b}).forEach(function(csid){
-      if(part) return;
-      if(to.parts[csid]) part = csid;
-    });
-    if(!part)
-    {
-      console.log("no matching parts",id.parts,to.parts);
-      return undefined;
-    }
-    return CS[part].openize(id,to);
+    console.log("can't open w/ no key");
+    return undefined;
   }
-	if(!to.ecc) to.ecc = ecKey();
 	if(!to.lineOut) to.lineOut = randomHEX(16);
   if(!to.lineAt) to.lineAt = Date.now();
-  if(!to.public) to.public = der2key(to.der);
 	var inner = {}
 	inner.at = to.lineAt; // always the same for the generated line id/key
 	inner.to = to.hashname;
+  inner.from = id.parts;
 	inner.line = to.lineOut;
-	var body = pencode(inner, id.der);
+	var body = pencode(inner, id.keys[to.csid].key);
 	var open = {type:"open"};
+  return CS[to.csid].openize(id, to, open, body);
+}
+
+CS["0"].openize = function(id, to, open, body)
+{
+  if(!to.ecc) to.ecc = ecKey("secp160r1", 20);
+  // get the shared secret to create the key for the open
+  var secret = ecdh(to.ecc.private, to.public, "secp160r1", 20);
+  console.log("ECDHE",secret.length, secret, to.lineOut, to.lineIn);
+  return pencode(open, body);
+}
+
+CS["8"].openize = function(id, to, open, body)
+{
+	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
+  if(!to.public) to.public = der2key(to.der);
 	var iv = forge.random.getBytesSync(16);
 	open.iv = forge.util.bytesToHex(iv);
 
@@ -388,15 +373,20 @@ function delineize(packet)
 	packet.lineok = true;
 }
 
-function ecdh(priv, pubbytes) {
-  var curve = getSECCurveByName("secp256r1").getCurve();
+function ecdh(priv, pub) {
+  var S = pub.multiply(priv);
+  return S.getX().toBigInteger().toString(16);
+}
+
+function ecdhXX(priv, pubbytes, curve, bytes) {
+  var curve = getSECCurveByName(curve).getCurve();
   var uncompressed = forge.util.createBuffer(pubbytes);
 //console.log(uncompressed.length(), uncompressed.bytes());
   uncompressed.getByte(); // chop off the 0x04
-  var x = uncompressed.getBytes(32);
-  var y = uncompressed.getBytes(32);
-//console.log(x.length, y.length);
-  if(y.length != 32) return false;
+  var x = uncompressed.getBytes(bytes);
+  var y = uncompressed.getBytes(bytes);
+console.log(priv, pubbytes, x.length, y.length);
+  if(y.length != bytes) return false;
   var P = new ECPointFp(curve,
     curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(x), 16)),
     curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(y), 16)));
