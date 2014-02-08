@@ -1584,7 +1584,7 @@ function inPath(err, packet, chan)
   // if path info from a seed, update our public ip/port
   if(packet.from.isSeed && typeof packet.js.path == "object" && packet.js.path.type == "ipv4" && !isLocalIP(packet.js.path.ip))
   {
-    debug("updating public ipv4",address);
+    debug("updating public ipv4",self.address,JSON.stringify(packet.js.path));
     self.pathSet({type:"pub4", ip:packet.js.path.ip, port:parseInt(packet.js.path.port)})
     self.address = [self.hashname,packet.js.path.ip,parseInt(packet.js.path.port)].join(",");
   }
