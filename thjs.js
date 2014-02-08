@@ -4,6 +4,9 @@ var warn = function(){console.log.apply(console,arguments); return undefined; };
 var debug = function(){};
 //var debug = function(){console.log.apply(console,arguments)};
 exports.debug = function(cb){ debug = cb; };
+var info = function(){};
+//var debug = function(){console.log.apply(console,arguments)};
+exports.info = function(cb){ info = cb; };
 
 
 var defaults = exports.defaults = {};
@@ -69,7 +72,7 @@ exports.hashname = function(keys, send)
       if(!via || !via.chans[path.id] || !via.alive)
       {
         debug("dropping dead relay via",JSON.stringify(path),via&&via.alive);
-        if(to) to.relay = false;
+        if(to && to.to == path) delete to.to;
         return;
       }
       // must include the sender path here to detect double-relay
@@ -359,7 +362,7 @@ function bridge(to, callback)
   });
 
   // worst case, blind attempt to bridge through the relay
-  if(!found && to.relay) return start(self.whois(to.relay.via));
+  if(!found && to.to && to.to.type == "relay") return start(self.whois(to.to.via));
 
   if(!found) return callback();
 }
@@ -376,8 +379,8 @@ function addSeed(arg) {
     var err;
     if(err = local.loadkey(seed, csid, arg.keys[csid])) return warn("failed to load key",arg.keys[csid],err);
     if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
-      if(pathMatch(path, seed.paths)) return;
-      seed.paths.push(path);
+      if(pathMatch(path, seed.unpaths)) return;
+      seed.unpaths.push(path);
     });
     if(arg.bridge) seed.bridging = true;
     seed.isSeed = true;
@@ -394,18 +397,18 @@ function addSeed(arg) {
   if(arg.ip)
   {
     var path = {type:"ipv4", ip:arg.ip, port:arg.port, priority:-2};
-    if(!pathMatch(path, seed.paths)) seed.paths.push(path);
+    if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
     seed.address = [seed.hashname,arg.ip,arg.port].join(","); // given ip:port should always be the most valid
   }
   if(arg.ip6)
   {
     var path = {type:"ipv6", ip:arg.ip6, port:arg.port6, priority:-1};
-    if(!pathMatch(path, seed.paths)) seed.paths.push(path);
+    if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
   }
   if(arg.http)
   {
     var path = {type:"http", http:arg.http, priority:-2};
-    if(!pathMatch(path, seed.paths)) seed.paths.push(path);
+    if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
   }
   if(arg.bridge) seed.bridging = true;
   seed.isSeed = true;
@@ -567,7 +570,7 @@ function whois(hashname)
 	if(hn) return hn;
   
   // make a new one
-  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], possible:{}, isAlive:0};
+  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], unpaths:[], possible:{}, isAlive:0};
   hn.address = hashname;
   hn.at = Date.now();
   hn.bucket = dhash(self.hashname, hashname);
@@ -595,13 +598,17 @@ function whois(hashname)
       warn("unknown path type", JSON.stringify(path));
       return path;
     }
+    
+    // preserve original
+    if(!path.json) path.json = JSON.parse(JSON.stringify(path));
 
-    // relays are special cases, not full paths
+    // relays are special cases, used temporarily and don't get added to .paths
     if(path.type == "relay")
     {
-      if(hn.relay && hn.relay.id == path.id) return hn.relay; // already exists
+      if(hn.to && hn.to.id == path.id) return hn.to; // already exists
       debug("relay incoming",hn.hashname,JSON.stringify(path));
-      hn.relay = path; // set new default relay
+      info(hn.hashname,path.type,JSON.stringify(path.json));
+      hn.to = path; // set new default relay
       hn.alive = false; // a new relay is a red flag
       // trigger sync whenever a relay is added (slightly delayed so other internal async stuff can happen first)
       var started = Date.now();
@@ -633,10 +640,10 @@ function whois(hashname)
     {
       // store a new path
       debug("adding new path",JSON.stringify(path),JSON.stringify(hn.paths));
+      info(hn.hashname,path.type,JSON.stringify(path.json));
       hn.paths.push(path);
       match = path;
       hn.to = match; // always set most recently created to best!
-      path.json = JSON.parse(JSON.stringify(path));
 
       // if bridging, and this path is from the bridge, flag it for lower priority
       if(hn.bridge && pathMatch(path, self.whois(hn.bridge).paths)) path.priority = -1;
@@ -661,7 +668,7 @@ function whois(hashname)
     match.lastIn = Date.now();
     
     // if better, use it
-    if(!pathValid(hn.to)) hn.to = match;
+    if(!pathValid(hn.to) || hn.to.type == "relay") hn.to = match;
 
     return match;
   }
@@ -674,21 +681,12 @@ function whois(hashname)
       debug("line sending",hn.hashname,hn.lineIn);
       var lined = packet.msg || local.lineize(hn, packet);
       hn.sentAt = Date.now();
-      
+
       // directed packets are preferred, just dump and done
       if(packet.to) return self.send(packet.to, lined, hn);
 
       // send to the default best path
       if(pathValid(hn.to)) return self.send(hn.to, lined, hn);
-
-      // when there's a relay, we have to try it
-      if(hn.relay)
-      {
-        if(packet.sender && packet.sender.type == "relay") return debug("skipping double-relay path",JSON.stringify(packet.sender),JSON.stringify(hn.relay));
-        self.send(hn.relay, lined, hn);
-        if(hn.relay) return; // assume the relay worked if it exists yet
-      }
-
     }
 
     // we've fallen through, either no line, or no valid paths
@@ -826,7 +824,7 @@ function whois(hashname)
   hn.open = function(direct)
   {
     if(!hn.der) return; // can't open if no key
-    if(!direct && hn.paths.length == 0) return debug("can't open, no path");
+    if(!direct && hn.paths.length == 0 && hn.unpaths.length == 0) return debug("can't open, no paths");
     // don't send again if we've sent one in the last few sec, prevents connect abuse
     if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;
     hn.sentOpen = Date.now();
@@ -843,13 +841,18 @@ function whois(hashname)
       }else{
         self.send(direct, open, hn);        
       }
-    }else{
-      // always send to all known paths, increase resiliency
-      hn.paths.forEach(function(path){
-        self.send(path, open, hn);
-      });
-      if(hn.relay) self.send(hn.relay, open, hn);
+      return;
     }
+
+    // always send to all known paths, increase resiliency
+    hn.paths.forEach(function(path){
+      self.send(path, open, hn);
+    });
+
+    // also send to any un-verified paths
+    hn.unpaths.forEach(function(path){
+      self.send(path, open, hn);
+    });
 
   }
   
@@ -867,10 +870,26 @@ function whois(hashname)
 
     // clone the paths and add in relay if one
     var paths = hn.paths.slice();
-    if(!hn.alive && hn.relay) paths.push(hn.relay);
+    if(hn.to && hn.to.type == "relay") paths.push(hn.to);
 
     // empty. TODO should we do something?
     if(paths.length == 0) return callback();
+
+    // compose all of our known paths we can send to them
+    var alts = [];
+    // if no ip paths and we have some, signal them
+    if(!types.ipv4 && self.paths.pub4) alts.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
+    if(!types.ipv6 && self.paths.pub6) alts.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
+    // if we support http path too
+    if(!types.http && self.paths.http) alts.push({type:"http",http:self.paths.http.http});
+    // if we support webrtc
+    if(!types.webrtc && self.paths.webrtc) alts.push({type:"webrtc", id:local.randomHEX(16)});
+    // include local ip/port if we're relaying to them
+    if(hn.relayAsk == "local")
+    {
+      if(self.paths.lan4) alts.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
+      if(self.paths.lan6) alts.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});        
+    }
 
     // check all paths at once
     var refcnt = paths.length;
@@ -880,20 +899,6 @@ function whois(hashname)
       js.path = path.json;
       // our outgoing priority of this path
       js.priority = (path.type == "relay") ? 0 : 1;
-      var alts = [];
-      // if no ip paths and we have some, signal them
-      if(!types.ipv4 && self.paths.pub4) alts.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
-      if(!types.ipv6 && self.paths.pub6) alts.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
-      // if we support http path too
-      if(!types.http && self.paths.http) alts.push({type:"http",http:self.paths.http.http});
-      // if we support webrtc
-      if(!types.webrtc && self.paths.webrtc) alts.push({type:"webrtc", id:local.randomHEX(16)});
-      // include local ip/port if we're relaying to them
-      if(hn.relayAsk == "local")
-      {
-        if(self.paths.lan4) alts.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
-        if(self.paths.lan6) alts.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});        
-      }
       if(alts.length > 0) js.paths = alts;
       hn.raw("path",{js:js, timeout:3000, to:path}, function(err, packet){
         // when it actually errored, invalidate it
