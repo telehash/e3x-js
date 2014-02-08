@@ -316,7 +316,7 @@ function linkMaint(self)
   Object.keys(self.buckets).forEach(function(bucket){
     // sort by age and send maintenance to only k links
     var sorted = self.buckets[bucket].sort(function(a,b){ return a.age - b.age });
-    debug("link maintenance on bucket",bucket,sorted.join(","));
+    debug("link maintenance on bucket",bucket,sorted.length);
     sorted.slice(0,defaults.link_k).forEach(function(hn){
       if(!hn.linked || !hn.alive) return;
       if((Date.now() - hn.linked.recvAt) < Math.ceil(defaults.link_timer/2)) return; // they ping'd us already recently
@@ -616,7 +616,7 @@ function whois(hashname)
             if(!pathin) return debug("no bridge");
             hn.bridge = via.hashname;
             // experimentally send direct via the bridge path now
-            hn.raw("path",{js:{priority:0},direct:pathin}, inPath);
+            hn.raw("path",{js:{priority:0},to:pathin}, inPath);
           });
         })
       },10);
@@ -635,6 +635,7 @@ function whois(hashname)
       debug("adding new path",JSON.stringify(path),JSON.stringify(hn.paths));
       hn.paths.push(path);
       match = path;
+      hn.to = match; // always set most recently created to best!
       path.json = JSON.parse(JSON.stringify(path));
 
       // if bridging, and this path is from the bridge, flag it for lower priority
@@ -658,6 +659,9 @@ function whois(hashname)
     
     // track last active timestamp
     match.lastIn = Date.now();
+    
+    // if better, use it
+    if(!pathValid(hn.to)) hn.to = match;
 
     return match;
   }
@@ -669,42 +673,16 @@ function whois(hashname)
     {
       debug("line sending",hn.hashname,hn.lineIn);
       var lined = packet.msg || local.lineize(hn, packet);
-      
-      // directed packets are a special case (path testing), dump and forget
-      if(packet.direct) return self.send(packet.direct, lined, hn);
-      
       hn.sentAt = Date.now();
-
-      // validate if a network path is acceptable to stop at
-      function validate(path)
-      {
-        if(Date.now() - path.lastIn < 60*1000) return true; // received anything in the last minute is good
-        if(!path.lastOut) return false; // is old and haven't sent anything
-        if(path.lastIn > path.lastOut) return true; // received any newer than sent, good
-        if((path.lastOut - path.lastIn) < 10000) return true; // received within 10sec of last sent
-        return false; // there are cases where it's still valid, but it's always safer to assume otherwise
-      }
-
-      // sort all possible paths by preference, priority and recency
-      var paths = hn.paths.sort(function(a,b){
-        if(packet.to && a === packet.to) return 1; // always put the .to at the top of the list, if any
-        if(a.priority == b.priority) return a.lastIn - b.lastIn;
-        return b.priority - a.priority;
-      });
       
-      // try them in order until there's a valid one
-      for(var i = 0; i < paths.length; i++)
-      {
-        var path = paths[i];
-        // validate first since it uses .lastOut which .send updates
-        var valid = validate(path);
-        if(!valid) debug("possibly dead path",JSON.stringify(path));
-        self.send(path, lined, hn);
-        if(valid) return; // any valid path means we're done!
-      }
+      // directed packets are preferred, just dump and done
+      if(packet.to) return self.send(packet.to, lined, hn);
 
-      // when not alive and there's a relay, we have to try it
-      if(!hn.alive && hn.relay)
+      // send to the default best path
+      if(pathValid(hn.to)) return self.send(hn.to, lined, hn);
+
+      // when there's a relay, we have to try it
+      if(hn.relay)
       {
         if(packet.sender && packet.sender.type == "relay") return debug("skipping double-relay path",JSON.stringify(packet.sender),JSON.stringify(hn.relay));
         self.send(hn.relay, lined, hn);
@@ -917,9 +895,9 @@ function whois(hashname)
         if(self.paths.lan6) alts.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});        
       }
       if(alts.length > 0) js.paths = alts;
-      hn.raw("path",{js:js, timeout:3000, direct:path}, function(err, packet){
-        // when it actually errored, lower priority
-        if(err && err !== true) path.priority = -10;
+      hn.raw("path",{js:js, timeout:3000, to:path}, function(err, packet){
+        // when it actually errored, invalidate it
+        if(err && err !== true) path.lastIn = 0;
         else inPath(true, packet); // handles any response .priority and .paths
         // processed all paths, done
         if((--refcnt) == 0) callback();
@@ -1083,7 +1061,7 @@ function raw(type, arg, callback)
     packet.js.c = chan.id;
     debug("SEND",chan.type,JSON.stringify(packet.js));
     chan.sentAt = Date.now();
-    if(!packet.to && chan.last) packet.to = chan.last; // always send back to the last received for this channel
+    if(!packet.to && pathValid(chan.last)) packet.to = chan.last; // always send back to the last received for this channel
     hn.send(packet);
     // if err'd or ended, delete ourselves
     if(packet.js.err || packet.js.end) delete hn.chans[chan.id];
@@ -1593,7 +1571,7 @@ function inPath(err, packet, chan)
     // don't send to ones we know about
     if(pathMatch(path, packet.from.paths)) return;
     // a new one, experimentally send it a path
-    packet.from.raw("path",{js:{priority:1},direct:path}, inPath);
+    packet.from.raw("path",{js:{priority:1},to:path}, inPath);
     // stash any path for possible bridge
     packet.from.possible[path.type] = path;
   });
@@ -1607,7 +1585,11 @@ function inPath(err, packet, chan)
   }
   
   // update any optional priority information
-  if(typeof packet.js.priority == "number") packet.sender.priority = packet.js.priority;
+  if(typeof packet.js.priority == "number"){
+    packet.sender.priority = packet.js.priority;
+    if(packet.from.to && packet.sender.priority > packet.from.to.priority) packet.from.to = packet.sender; // make the default!    
+  }
+
   if(err) return; // bye bye bye!
   
   // need to respond, prioritize everything above relay
@@ -1764,6 +1746,15 @@ function pathMatch(path1, paths)
   });
   return match;
 }
+
+// validate if a network path is acceptable to stop at
+function pathValid(path)
+{
+  if(!path || !path.lastIn) return false;
+  if(Date.now() - path.lastIn < 60*1000) return true; // received anything in the last minute is good
+  return false;
+}
+
 
 function partsMatch(parts1, parts2)
 {
