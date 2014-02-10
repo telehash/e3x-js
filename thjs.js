@@ -470,8 +470,6 @@ function receive(msg, path)
   if(packet.js.type == "lan") return inLan(self, packet);
   if(packet.js.type == "seed") return inLanSeed(self, packet);
 
-  if(typeof packet.js.iv != "string" || packet.js.iv.length != 32) return warn("missing initialization vector (iv)", path);
-
   // either it's an open
   if(packet.js.type == "open")
 	{
@@ -479,9 +477,19 @@ function receive(msg, path)
     if (!open || !open.verify) return warn("couldn't decode open",open);
     if (!isHEX(open.js.line, 32)) return warn("invalid line id enclosed",open.js.line);
     if(open.js.to !== self.hashname) return warn("open for wrong hashname",open.js.to);
+    var csid = partsMatch(self.parts,open.js.from);
+    if(csid != open.csid) return warn("open with mismatch CSID",csid,open.csid);
 
-    var from = self.whois(local.der2hn(open.rsa));
-    if (!from) return warn("invalid hashname", local.der2hn(open.rsa), open.rsa);
+    var fromhn = local.parts2hn(open.js.from);
+    var from = self.whois(fromhn);
+    if (!from) return warn("invalid hashname", fromhn);
+    // load up CS info
+    if(!from.csid)
+    {
+      from.parts = open.js.from;
+      from.public = open.public;
+      from.csid = csid;
+    }
 
     // make sure this open is legit
     if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
@@ -504,7 +512,6 @@ function receive(msg, path)
     // update values
     var line = {};
     from.openAt = open.js.at;
-    from.der = open.rsa;
     from.lineIn = open.js.line;
 
     // this will send an open if needed
@@ -823,7 +830,7 @@ function whois(hashname)
   // force send an open packet, direct overrides the network
   hn.open = function(direct)
   {
-    if(!hn.key) return; // can't open if no key
+    if(!hn.public) return; // can't open if no key
     if(!direct && hn.paths.length == 0 && hn.unpaths.length == 0) return debug("can't open, no paths");
     // don't send again if we've sent one in the last few sec, prevents connect abuse
     if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;
