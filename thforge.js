@@ -302,7 +302,9 @@ CS["0"].deopenize = function(id, open)
   var body = forge.util.createBuffer(open.body);
   var mac1 = body.getBytes(20);
   var pub = body.bytes(40);
-  var secret = unstupid(ecdh(id.cs["0"].private, ecPub(pub, "secp160r1", 20)),40);
+  ret.linepub = ecPub(pub, "secp160r1", 20);
+  if(!ret.linepub) return ret;
+  var secret = unstupid(ecdh(id.cs["0"].private, ret.linepub),40);
   console.log("ECDHE",secret.length, secret, forge.util.bytesToHex(id.cs["0"].key), forge.util.bytesToHex(pub));
   var key = secret.substr(0,32);
   var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
@@ -324,6 +326,7 @@ CS["0"].deopenize = function(id, open)
 	var inner = pdecode(cipher.output);
 
   // verify+load inner key info
+  console.log("INPUB",forge.util.bytesToHex(inner.body));
   ret.public = ecPub(inner.body, "secp160r1", 20);
   if(!ret.public) return ret;
   if(typeof inner.js.from != "object" || !inner.js.from["0"]) return ret;
@@ -416,8 +419,7 @@ function openline(from, open)
 CS["0"].openline = function(from, open)
 {
   from.lineIV = 0;
-  console.log("FROM",from.hashname);
-  var ecdhe = ecdh(from.ecc.private, open.public);
+  var ecdhe = ecdh(from.ecc.private, open.linepub);
   console.log("ECDHE LINE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
 	var md = forge.md.sha1.create()
 	md.update(forge.util.hexToBytes(ecdhe));
@@ -466,10 +468,9 @@ CS["0"].lineize = function(to, packet)
 
 	// now encrypt the packet
 	var cipher = forge.aes.createEncryptionCipher(to.encKey.copy(), "CTR");
-	cipher.start(iv);
+	cipher.start(forge.util.hexToBytes(unstupid(forge.util.bytesToHex(iv),32))); // padd out the IV to 16 bytes
 	cipher.update(buf);
 	cipher.finish();
-//	console.log("COUT",cipher.output.toHex());
 
   // prepend the IV and hmac it
   var macd = forge.util.createBuffer();
@@ -483,6 +484,9 @@ CS["0"].lineize = function(to, packet)
   var body = forge.util.createBuffer();
   body.putBytes(hmac.digest().bytes());
   body.putBytes(macd.bytes());
+
+	console.log("LOUT",wrap,body.toHex());
+
   return pencode(wrap, body);
 }
 

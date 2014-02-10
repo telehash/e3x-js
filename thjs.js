@@ -319,7 +319,7 @@ function linkMaint(self)
   Object.keys(self.buckets).forEach(function(bucket){
     // sort by age and send maintenance to only k links
     var sorted = self.buckets[bucket].sort(function(a,b){ return a.age - b.age });
-    debug("link maintenance on bucket",bucket,sorted.length);
+    if(sorted.length) debug("link maintenance on bucket",bucket,sorted.length);
     sorted.slice(0,defaults.link_k).forEach(function(hn){
       if(!hn.linked || !hn.alive) return;
       if((Date.now() - hn.linked.recvAt) < Math.ceil(defaults.link_timer/2)) return; // they ping'd us already recently
