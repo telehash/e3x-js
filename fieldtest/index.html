@@ -41,7 +41,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         var me; // make global for console testing
         thforge.forge(forge);
         thforge.sjcl(sjcl);
-        var sets = {"0":true}; // only use CS0 by default in the browser, others are slow
+        var sets = {"1":true}; // only use CS0 by default in the browser, others are slow
         thjs.debug(function(){console.log.apply(console,arguments)});
         function getId(callback)
         {
@@ -248,7 +248,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                     {
                       Object.keys(me.lines).forEach(function(line){
                         var hn = me.lines[line];
-                        log(hn.address,Object.keys(hn.chans).length);
+                        log(hn.hashname,hn.ip,hn.port,Object.keys(hn.chans).length);
                       });
                     }
                     cmds.gw = cmds.gwho = function(arg){
@@ -308,7 +308,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                       var start = Date.now();
                       hn.seek(me.hashname,function(err){
                         if(err && err !== true) return log("ping failed",hn.hashname,err);
-                        log("pong",hn.address,Date.now()-start);
+                        log("pong",hn.hashname,Date.now()-start);
                       });
                     }
                     cmds.bulk = function(arg)

@@ -18,7 +18,6 @@ var sjcl;
 exports.sjcl = function(lib)
 {
   sjcl = lib;
-  console.log("loaded SJCL",typeof sjcl);
 }
 
 // these are all the crypto/binary dependencies needed by thjs
@@ -40,12 +39,12 @@ exports.pdecode = pdecode;
 try{thjs.localize(exports)}catch(E){}
 
 
-var CS = {"0":{},"8":{}};
+var CS = {"1":{},"1r":{}};
 
 exports.parts2hn = function(parts)
 {
-  var sorted = Object.keys(parts).sort(function(a,b){return a-b});
-  var values = sorted.map(function(id){return parts[id.toString()]});
+  var sorted = Object.keys(parts).sort();
+  var values = sorted.map(function(id){return parts[id]});
   return forge.md.sha256.create().update(values.join("")).digest().toHex();
 }
 
@@ -62,7 +61,7 @@ exports.loadkeys = function(id, keys)
   Object.keys(id.parts).forEach(function(csid){
     id.keys[csid] = keys[csid];
     id.cs[csid] = {};
-    err = err||CS[csid].loadkey(id.cs[csid], keys[csid], keys[csid+"p"]);
+    err = err||CS[csid].loadkey(id.cs[csid], keys[csid], keys[csid+"_"]);
   });
   return err;
 }
@@ -75,7 +74,7 @@ exports.loadkey = function(id, csid, key)
 
 exports.genkeys = function(cbDone,cbStep,sets)
 {
-  if(!sets) sets = {"0":true,"8":true}; // default sets to create
+  if(!sets) sets = {"1":true,"1r":true}; // default sets to create
   var ret = {parts:{}};
   var todo = Object.keys(sets).filter(function(csid){ return CS[csid];});
   if(todo.length == 0) return cbDone("no sets supported");
@@ -89,12 +88,12 @@ exports.genkeys = function(cbDone,cbStep,sets)
   pop();
 }
 
-CS["0"].genkey = function(ret,cbDone,cbStep)
+CS["1"].genkey = function(ret,cbDone,cbStep)
 {
   var k = ecKey("secp160r1",20);
-  ret["0"] = forge.util.encode64(k.public.uncompressed);
-  ret["0p"] = forge.util.encode64(k.private.uncompressed);
-  ret.parts["0"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
+  ret["1"] = forge.util.encode64(k.public.uncompressed);
+  ret["1_"] = forge.util.encode64(k.private.uncompressed);
+  ret.parts["1"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
   cbDone();
 }
 
@@ -105,27 +104,27 @@ function ecPub(pub, curve, bytes)
   var uncompressed = forge.util.createBuffer(pub);
   var x = uncompressed.getBytes(bytes);
   var y = uncompressed.getBytes();
-  if(y.length != bytes) return false;
   return new ECPointFp(curve,
-    curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(x), 16)),
-    curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(y), 16)));
+    curve.fromBigInteger(new BigInteger(unstupid(forge.util.bytesToHex(x),bytes), 16)),
+    curve.fromBigInteger(new BigInteger(unstupid(forge.util.bytesToHex(y),bytes), 16)));
 }
 
-CS["0"].loadkey = function(id, pub, priv)
+CS["1"].loadkey = function(id, pub, priv)
 {
   id.key = (pub.length == 40) ? pub : forge.util.decode64(pub);
-  if(id.parts && id.parts["0"] != forge.md.sha1.create().update(id.key).digest().toHex()) return "fingerprint mismatch";
+  console.log("LOADKEY",id.hashname,forge.util.bytesToHex(id.key));
+  if(id.parts && id.parts["1"] != forge.md.sha1.create().update(id.key).digest().toHex()) return "fingerprint mismatch";
   id.public = ecPub(id.key, "secp160r1", 20);
   if(!id.public) return "wrong size";
   if(priv)
   {
     var bytes = (priv.length == 20) ? priv : forge.util.decode64(priv);
-    id.private = new BigInteger(forge.util.bytesToHex(bytes), 16);    
+    id.private = new BigInteger(unstupid(forge.util.bytesToHex(bytes),40), 16);    
   }
   return false;
 }
 
-CS["8"].genkey = function(ret,cbDone,cbStep)
+CS["1r"].genkey = function(ret,cbDone,cbStep)
 {
 	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
 	var step = function() {
@@ -134,16 +133,16 @@ CS["8"].genkey = function(ret,cbDone,cbStep)
       if(cbStep) cbStep();
 	    setTimeout(step, 10);
 	  } else {
-      ret["8"] = forge.util.encode64(asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes());
-      ret["8p"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
-      ret.parts["8"] = der2hn(key2der(state.keys.publicKey));
+      ret["1r"] = forge.util.encode64(asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes());
+      ret["1r_"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
+      ret.parts["1r"] = der2hn(key2der(state.keys.publicKey));
       cbDone();
 	  }
 	}
 	setTimeout(step);  
 }
 
-CS["8"].loadkey = function(id, pub, priv)
+CS["1r"].loadkey = function(id, pub, priv)
 {
   id.public = pub2key(pub);
   id.key = key2der(id.public);
@@ -208,13 +207,13 @@ function der2der(der)
 // return random bytes, in hex
 function randomHEX(len)
 {
-	return forge.util.bytesToHex(forge.random.getBytesSync(len));
+	return unstupid(forge.util.bytesToHex(forge.random.getBytesSync(len)),len*2);
 }
 
 // zero prepad
 function unstupid(hex,len)
 {
-	return (hex.length >= len) ? hex : unstupid("0"+hex,len);
+	return (hex.length >= len) ? hex : unstupid("1"+hex,len);
 }
 
 function ecKey(curve, bytes)
@@ -258,17 +257,18 @@ function openize(id, to)
   return CS[to.csid].openize(id, to, open, inner);
 }
 
-CS["0"].openize = function(id, to, open, inner)
+CS["1"].openize = function(id, to, open, inner)
 {
   if(!to.ecc) to.ecc = ecKey("secp160r1", 20);
   // get the shared secret to create the iv+key for the open aes
+  console.log("EO PRE",forge.util.bytesToHex(to.ecc.key),forge.util.bytesToHex(to.key));
   var secret = unstupid(ecdh(to.ecc.private, to.public),40);
-  console.log("ECDHE",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
+  console.log("ECDHE O",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
   var key = secret.substr(0,32);
   var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
 
   // aes-128 the open
-	var ibody = pencode(inner, id.cs["0"].key);
+	var ibody = pencode(inner, id.cs["1"].key);
 	var cipher = forge.aes.createEncryptionCipher(forge.util.hexToBytes(key), "CTR");
 	cipher.start(forge.util.hexToBytes(iv));
 	cipher.update(ibody);
@@ -304,7 +304,7 @@ function deopenize(id, open)
   return ret;
 }
 
-CS["0"].deopenize = function(id, open)
+CS["1"].deopenize = function(id, open)
 {
   var ret = {verify:false};
   if(!open.body) return ret;
@@ -313,8 +313,9 @@ CS["0"].deopenize = function(id, open)
   var pub = body.bytes(40);
   ret.linepub = ecPub(pub, "secp160r1", 20);
   if(!ret.linepub) return ret;
-  var secret = unstupid(ecdh(id.cs["0"].private, ret.linepub),40);
-  console.log("ECDHE",secret.length, secret, forge.util.bytesToHex(id.cs["0"].key), forge.util.bytesToHex(pub));
+  console.log("ED PRE",forge.util.bytesToHex(pub),forge.util.bytesToHex(id.cs["1"].key));
+  var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
+  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
   var key = secret.substr(0,32);
   var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
 
@@ -336,10 +337,10 @@ CS["0"].deopenize = function(id, open)
 
   // verify+load inner key info
   console.log("INPUB",forge.util.bytesToHex(inner.body));
-  ret.public = ecPub(inner.body, "secp160r1", 20);
-  if(!ret.public) return ret;
-  if(typeof inner.js.from != "object" || !inner.js.from["0"]) return ret;
-  if(forge.md.sha1.create().update(inner.body).digest().toHex() != inner.js.from["0"]) return ret;
+  if(!ecPub(inner.body, "secp160r1", 20)) return ret;
+  ret.key = inner.body;
+  if(typeof inner.js.from != "object" || !inner.js.from["1"]) return ret;
+  if(forge.md.sha1.create().update(inner.body).digest().toHex() != inner.js.from["1"]) return ret;
   
   // all good, cache+return
   ret.verify = true;
@@ -348,7 +349,7 @@ CS["0"].deopenize = function(id, open)
   return ret;
 }
 
-CS["8"].openize = function(id, to, open, body)
+CS["1r"].openize = function(id, to, open, body)
 {
 	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
   if(!to.public) to.public = der2key(to.der);
@@ -384,7 +385,7 @@ CS["8"].openize = function(id, to, open, body)
 	return packet;
 }
 
-CS["8"].deopenize = function(id, open)
+CS["1r"].deopenize = function(id, open)
 {
   return {verify:false};
 	// decrypt the ecc key
@@ -425,7 +426,7 @@ function openline(from, open)
 }
 
 // set up the line enc/dec keys
-CS["0"].openline = function(from, open)
+CS["1"].openline = function(from, open)
 {
   from.lineIV = 0;
   var ecdhe = ecdh(from.ecc.private, open.linepub);
@@ -444,7 +445,7 @@ CS["0"].openline = function(from, open)
 }
 
 // set up the line enc/dec keys
-CS["8"].openline = function(from, open)
+CS["1r"].openline = function(from, open)
 {
   var ecdhe = ecdh(from.ecc.private, open.ecc);
 //  console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
@@ -473,7 +474,7 @@ function delineize(from, packet)
   return CS[from.csid].delineize(from, packet);
 }
 
-CS["0"].lineize = function(to, packet)
+CS["1"].lineize = function(to, packet)
 {
 	var wrap = {type:"line"};
 	wrap.line = to.lineIn;
@@ -505,7 +506,7 @@ CS["0"].lineize = function(to, packet)
   return pencode(wrap, body);
 }
 
-CS["0"].delineize = function(from, packet)
+CS["1"].delineize = function(from, packet)
 {
   if(!packet.body) return "no body";
   var body = forge.util.createBuffer(packet.body);
@@ -528,7 +529,7 @@ CS["0"].delineize = function(from, packet)
   return false;
 }
 
-CS["8"].lineize = function(to, packet)
+CS["1r"].lineize = function(to, packet)
 {
 	var wrap = {type:"line"};
 	wrap.line = to.lineIn;
@@ -547,7 +548,7 @@ CS["8"].lineize = function(to, packet)
 }
 
 // decrypt the contained packet
-CS["8"].delineize = function(from, packet)
+CS["1r"].delineize = function(from, packet)
 {
 	var cipher = forge.aes.createDecryptionCipher(packet.from.decKey.copy(), "CTR");
 	cipher.start(forge.util.hexToBytes(packet.js.iv));
@@ -564,6 +565,7 @@ CS["8"].delineize = function(from, packet)
 function ecdh(priv, pub) {
   if(!priv || !pub) return "00";
   var S = pub.multiply(priv);
+  console.log(S.getX());
   return S.getX().toBigInteger().toString(16);
 }
 

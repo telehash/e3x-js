@@ -482,13 +482,9 @@ function receive(msg, path)
     var fromhn = local.parts2hn(open.js.from);
     var from = self.whois(fromhn);
     if (!from) return warn("invalid hashname", fromhn);
-    // load up CS info
-    if(!from.csid)
-    {
-      from.parts = open.js.from;
-      from.public = open.public;
-      from.csid = csid;
-    }
+    from.parts = open.js.from;
+    var err;
+    if((err = local.loadkey(from, csid, open.key))) return warn("failed to load open key",from.hashname,err);
 
     // make sure this open is legit
     if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
@@ -1776,9 +1772,9 @@ function pathValid(path)
 function partsMatch(parts1, parts2)
 {
   if(typeof parts1 != "object" || typeof parts2 != "object") return false;
-  var ids = Object.keys(parts1).sort(function(a,b){return b-a});
+  var ids = Object.keys(parts1).sort();
   var csid;
-  while(csid = ids.shift()) if(parts2[csid]) return csid;
+  while(csid = ids.pop()) if(parts2[csid]) return csid;
   return false;
 }
 
