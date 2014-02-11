@@ -213,7 +213,7 @@ function randomHEX(len)
 // zero prepad
 function unstupid(hex,len)
 {
-	return (hex.length >= len) ? hex : unstupid("1"+hex,len);
+	return (hex.length >= len) ? hex : unstupid("0"+hex,len);
 }
 
 function ecKey(curve, bytes)
@@ -228,7 +228,7 @@ function ecKey(curve, bytes)
 	priecc.uncompressed = forge.util.hexToBytes(unstupid(priecc.toString(16),bytes*2));
 	//console.log(priecc);
 
-	//var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
+//	var G = new ECPointFp(c.getCurve(), c.getCurve().fromBigInteger(c.getG().getX().toBigInteger(), c.getG().getY().toBigInteger());
 	//console.log(G);
 	var P = c.getG().multiply(priecc);
 	var pubhex = unstupid(P.getX().toBigInteger().toString(16),bytes*2)+unstupid(P.getY().toBigInteger().toString(16),bytes*2);
@@ -565,7 +565,6 @@ CS["1r"].delineize = function(from, packet)
 function ecdh(priv, pub) {
   if(!priv || !pub) return "00";
   var S = pub.multiply(priv);
-  console.log(S.getX());
   return S.getX().toBigInteger().toString(16);
 }
 
