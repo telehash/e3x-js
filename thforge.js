@@ -261,9 +261,8 @@ CS["1"].openize = function(id, to, open, inner)
 {
   if(!to.ecc) to.ecc = ecKey("secp160r1", 20);
   // get the shared secret to create the iv+key for the open aes
-  console.log("EO PRE",forge.util.bytesToHex(to.ecc.key),forge.util.bytesToHex(to.key));
   var secret = unstupid(ecdh(to.ecc.private, to.public),40);
-  console.log("ECDHE O",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
+//  console.log("ECDHE O",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
   var key = secret.substr(0,32);
   var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
 
@@ -274,7 +273,9 @@ CS["1"].openize = function(id, to, open, inner)
 	cipher.update(ibody);
 	cipher.finish();
   
-  // prepend the line public key and hmac it
+  // prepend the line public key and hmac it  
+  var secret = unstupid(ecdh(id.cs["1"].private, to.public),40);
+  console.log("MACSEC O",secret);
   var macd = forge.util.createBuffer();
   macd.putBytes(to.ecc.key);
   macd.putBytes(cipher.output.bytes());
@@ -288,6 +289,49 @@ CS["1"].openize = function(id, to, open, inner)
   body.putBytes(macd.bytes());
   return pencode(open, body);
 }
+
+CS["1r"].openize = function(id, to, open, inner)
+{
+	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
+  var pubhex = forge.util.bytesToHex(to.ecc.key);
+
+  // create the aes key/iv
+	var md = forge.md.sha256.create();
+	md.update(to.ecc.key);
+  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+  var iv = sjcl.codec.hex.toBits(unstupid("1",32));
+
+	// now encrypt the body    
+	var ibody = pencode(inner, id.cs["1r"].key);
+  var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(ibody.bytes())), iv, [], 128);
+  var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+//  console.log("SJCL",cbody.length, ibody.length());
+
+	// sign & encrypt the sig
+	var md = forge.md.sha256.create();
+	md.update(cbody);
+	var sig = id.cs["1r"].private.sign(md);
+	var md = forge.md.sha256.create();
+	md.update(to.ecc.key);
+	md.update(forge.util.hexToBytes(to.lineOut));
+  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+  var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(sig)), iv, [], 32);
+  var csig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+
+	// encrypt the ecc key
+  var ekey = to.public.encrypt(to.ecc.key, "RSA-OAEP");
+  console.log("CC",ekey.length,csig.length,cbody.length);
+  
+  var body = forge.util.createBuffer();
+  body.putBytes(ekey);
+  body.putBytes(csig);
+  body.putBytes(cbody);
+
+	console.log(open, body.length());
+	var packet = pencode(open, body);
+	return packet;
+}
+
 
 function deopenize(id, open)
 {
@@ -313,19 +357,11 @@ CS["1"].deopenize = function(id, open)
   var pub = body.bytes(40);
   ret.linepub = ecPub(pub, "secp160r1", 20);
   if(!ret.linepub) return ret;
-  console.log("ED PRE",forge.util.bytesToHex(pub),forge.util.bytesToHex(id.cs["1"].key));
   var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
-  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
+//  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
   var key = secret.substr(0,32);
   var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
-
-  // verify the hmac
-  var hmac = forge.hmac.create();
-  hmac.start("sha1", forge.util.hexToBytes(secret));
-  hmac.update(body.bytes());
-  var mac2 = hmac.digest().bytes();
-  console.log("HMAC",forge.util.bytesToHex(mac1),forge.util.bytesToHex(mac2))
-  if(mac2 != mac1) return ret;
+  var mbody = body.bytes();
 
   // aes-128 decipher the inner
   body.getBytes(40); // remove the prefixed key
@@ -334,13 +370,25 @@ CS["1"].deopenize = function(id, open)
 	cipher.update(body);
 	cipher.finish();
 	var inner = pdecode(cipher.output);
+  if(!inner) return ret;
 
   // verify+load inner key info
   console.log("INPUB",forge.util.bytesToHex(inner.body));
-  if(!ecPub(inner.body, "secp160r1", 20)) return ret;
+  var pub = ecPub(inner.body, "secp160r1", 20);
+  if(!pub) return ret;
   ret.key = inner.body;
   if(typeof inner.js.from != "object" || !inner.js.from["1"]) return ret;
   if(forge.md.sha1.create().update(inner.body).digest().toHex() != inner.js.from["1"]) return ret;
+
+  // verify the hmac
+  var secret = unstupid(ecdh(id.cs["1"].private, pub),40);
+  console.log("MACSEC D",secret);
+  var hmac = forge.hmac.create();
+  hmac.start("sha1", forge.util.hexToBytes(secret));
+  hmac.update(mbody);
+  var mac2 = hmac.digest().bytes();
+  console.log("HMAC",forge.util.bytesToHex(mac1),forge.util.bytesToHex(mac2))
+  if(mac2 != mac1) return ret;
   
   // all good, cache+return
   ret.verify = true;
@@ -349,44 +397,39 @@ CS["1"].deopenize = function(id, open)
   return ret;
 }
 
-CS["1r"].openize = function(id, to, open, body)
-{
-	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
-  if(!to.public) to.public = der2key(to.der);
-	var iv = forge.random.getBytesSync(16);
-	open.iv = forge.util.bytesToHex(iv);
-
-	// now encrypt the body
-	var md = forge.md.sha256.create();
-	md.update(to.ecc.public.uncompressed);
-	var cipher = forge.aes.createEncryptionCipher(md.digest(), "CTR");
-	cipher.start(iv);
-	cipher.update(body);
-	cipher.finish();
-	body = cipher.output;
-
-	// sign & encrypt the sig
-	var md = forge.md.sha256.create();
-	md.update(body.bytes());
-	var sig = id.private.sign(md);
-	var md = forge.md.sha256.create();
-	md.update(to.ecc.public.uncompressed);
-	md.update(forge.util.hexToBytes(to.lineOut));
-	var cipher = forge.aes.createEncryptionCipher(md.digest(), "CTR");
-	cipher.start(iv);
-  cipher.update(forge.util.createBuffer(sig));
-	cipher.finish();
-  open.sig = forge.util.encode64(cipher.output.bytes());
-
-	// encrypt the ecc key
-	open.open = forge.util.encode64(to.public.encrypt(to.ecc.public.uncompressed, "RSA-OAEP"));
-//	console.log(open, body.length());
-	var packet = pencode(open, body);
-	return packet;
-}
-
 CS["1r"].deopenize = function(id, open)
 {
+  var ret = {verify:false};
+  if(!open.body) return ret;
+  var body = forge.util.createBuffer(open.body);
+  var ekey = body.getBytes(256);
+  var csig = body.getBytes(260);
+
+  // decrypt the line key and use it for the aes key
+	var ecpub = id.cs["1r"].private.decrypt(ekey, "RSA-OAEP");
+  console.log("ECPUB",ecpub.length,forge.util.bytesToHex(ecpub));
+	var md = forge.md.sha256.create();
+	md.update(ecpub);
+  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest.bytes())));
+  var iv = sjcl.codec.hex.toBits(unstupid("1",32));
+
+	// now decrypt the inner    
+  var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(body.bytes())), iv, [], 128);
+  var ibody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+  var inner = pdecode(ibody);
+  console.log(inner);
+  return ret;
+
+
+  ret.linepub = ecPub(pub, "secp160r1", 20);
+  if(!ret.linepub) return ret;
+  var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
+//  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
+  var key = secret.substr(0,32);
+  var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
+  var mbody = body.bytes();
+
+
   return {verify:false};
 	// decrypt the ecc key
 	var dec = forge.util.decode64(open.js.open);
