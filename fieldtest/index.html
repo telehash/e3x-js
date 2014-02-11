@@ -24,6 +24,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         </style>
         <script src="jquery.min.js"></script>
         <script src="jquery.tmpl.min.js"></script>
+        <script src="../includes/sjcl.js"></script>
         <script src="../includes/forge.min.js"></script>
         <script src="../includes/jsbn.js"></script>
         <script src="../includes/jsbn2.js"></script>
@@ -39,26 +40,27 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         <script>
         var me; // make global for console testing
         thforge.forge(forge);
+        thforge.sjcl(sjcl);
+        var sets = {"0":true}; // only use CS0 by default in the browser, others are slow
         thjs.debug(function(){console.log.apply(console,arguments)});
         function getId(callback)
         {
-        	if(localStorage.nick)
+        	if(localStorage.thid)
         	{
-        		var ret = {nick:localStorage.nick, public:localStorage.pubkey, private:localStorage.prikey};
-        		console.log("returning key",ret);
+        		var ret = JSON.parse(localStorage.thid);
+        		console.log("returning id",ret);
             ret.seeds = seeds;
             return callback(ret);
         	}
 
         	// generate/save one nicely
-        	window.alert("generating private local id, this only happens once and should be less than 30 seconds");
-          thforge.genkey(function(err, keys){
+        	//window.alert("generating private local id, this only happens once and should be less than 30 seconds");
+          thforge.genkeys(function(err, keys){
             if(err) return window.alert("error: "+err);
-        		localStorage.pubkey = keys.public;
-        		localStorage.prikey = keys.private;
-           localStorage.nick = window.prompt("enter a nickname");
+           keys.nick = window.prompt("enter a nickname");
+        		localStorage.thid = JSON.stringify(keys);
            getId(callback);
-          });
+          },function(){console.log("generating")},sets);
         }
         </script>
     </head>

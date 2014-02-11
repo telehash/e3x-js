@@ -14,6 +14,13 @@ exports.forge = function(lib)
   return exports;
 }
 
+var sjcl;
+exports.sjcl = function(lib)
+{
+  sjcl = lib;
+  console.log("loaded SJCL",typeof sjcl);
+}
+
 // these are all the crypto/binary dependencies needed by thjs
 exports.genkey = genkey;
 exports.pub2key = pub2key;
@@ -34,16 +41,17 @@ try{thjs.localize(exports)}catch(E){}
 
 
 var CS = {"0":{},"8":{}};
-CS["0"].openize = function(id,to)
-{
-  
-}
 
 exports.parts2hn = function(parts)
 {
   var sorted = Object.keys(parts).sort(function(a,b){return a-b});
   var values = sorted.map(function(id){return parts[id.toString()]});
   return forge.md.sha256.create().update(values.join("")).digest().toHex();
+}
+
+exports.getkey = function(id, csid)
+{
+  return id.cs && id.cs[csid] && id.cs[csid].key;
 }
 
 exports.loadkeys = function(id, keys)
@@ -106,6 +114,7 @@ function ecPub(pub, curve, bytes)
 CS["0"].loadkey = function(id, pub, priv)
 {
   id.key = (pub.length == 40) ? pub : forge.util.decode64(pub);
+  if(id.parts && id.parts["0"] != forge.md.sha1.create().update(id.key).digest().toHex()) return "fingerprint mismatch";
   id.public = ecPub(id.key, "secp160r1", 20);
   if(!id.public) return "wrong size";
   if(priv)
@@ -455,7 +464,13 @@ CS["8"].openline = function(from, open)
 // encrypt the packet
 function lineize(to, packet)
 {
-  CS[to.csid].lineize(to, packet);
+  return CS[to.csid].lineize(to, packet);
+}
+
+// decrypt the packet
+function delineize(from, packet)
+{
+  return CS[from.csid].delineize(from, packet);
 }
 
 CS["0"].lineize = function(to, packet)
@@ -482,12 +497,35 @@ CS["0"].lineize = function(to, packet)
   
   // create final body
   var body = forge.util.createBuffer();
-  body.putBytes(hmac.digest().bytes());
+  body.putBytes(hmac.digest().bytes(4));
   body.putBytes(macd.bytes());
 
 	console.log("LOUT",wrap,body.toHex());
 
   return pencode(wrap, body);
+}
+
+CS["0"].delineize = function(from, packet)
+{
+  if(!packet.body) return "no body";
+  var body = forge.util.createBuffer(packet.body);
+  var mac = body.getBytes(4);
+  var hmac = forge.hmac.create();
+  hmac.start("sha1", from.decKey.bytes());
+  hmac.update(body.bytes());
+  if(hmac.digest().bytes(4) != mac) return "invalid hmac";
+
+  var iv = body.getBytes(4);
+	var cipher = forge.aes.createDecryptionCipher(from.decKey.copy(), "CTR");
+	cipher.start(forge.util.hexToBytes(unstupid(forge.util.bytesToHex(iv),32)));
+	cipher.update(body);
+	cipher.finish();
+	if(!cipher.output) return "cipher failed";
+	var deciphered = pdecode(cipher.output);
+	if(!deciphered) return "invalid decrypted packet";
+  packet.js = deciphered.js;
+  packet.body = deciphered.body;
+  return false;
 }
 
 CS["8"].lineize = function(to, packet)
@@ -509,18 +547,18 @@ CS["8"].lineize = function(to, packet)
 }
 
 // decrypt the contained packet
-function delineize(packet)
+CS["8"].delineize = function(from, packet)
 {
 	var cipher = forge.aes.createDecryptionCipher(packet.from.decKey.copy(), "CTR");
 	cipher.start(forge.util.hexToBytes(packet.js.iv));
 	cipher.update(forge.util.createBuffer(packet.body));
 	cipher.finish();
-	if(!cipher.output) return console.log("couldn't decrypt packet",packet.js.line, packet.sender);
+	if(!cipher.output) return "no cipher output";
 	var deciphered = pdecode(cipher.output);
-	if(!deciphered) return console.log("invalid decrypted packet", cipher.output);
+	if(!deciphered) return "invalid decrypted packet";
   packet.js = deciphered.js;
   packet.body = deciphered.body;
-	packet.lineok = true;
+  return true;
 }
 
 function ecdh(priv, pub) {

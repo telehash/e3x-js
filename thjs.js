@@ -43,14 +43,14 @@ exports.hashname = function(keys, send)
     self.parts = keys.parts;
     var err = local.loadkeys(self,keys);
     if(err) return warn("failed to load keys",err);
-    self.address = self.hashname = local.parts2hn(self.parts);
+    self.hashname = local.parts2hn(self.parts);
   }else{ // legacy
     if(!keys.public || !keys.private) return warn("bad args to hashname, requires key.public and key.private");
     if(!local.pub2key(keys.public) || !local.pri2key(keys.private)) return warn("key.public and key.private must be valid pem strings");    
     self.private = local.pri2key(keys.private);
     self.public = local.pub2key(keys.public);
     self.der = local.key2der(self.public);
-    self.address = self.hashname = local.der2hn(self.der);
+    self.hashname = local.der2hn(self.der);
   }
   if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
@@ -398,7 +398,6 @@ function addSeed(arg) {
   {
     var path = {type:"ipv4", ip:arg.ip, port:arg.port, priority:-2};
     if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
-    seed.address = [seed.hashname,arg.ip,arg.port].join(","); // given ip:port should always be the most valid
   }
   if(arg.ip6)
   {
@@ -551,8 +550,8 @@ function receive(msg, path)
 	  }
 
 		// decrypt and process
-	  local.delineize(packet);
-		if(!packet.lineok) return debug("couldn't decrypt line",packet.sender);
+    var err;
+	  if((err = local.delineize(packet.from, packet))) return debug("couldn't decrypt line",err,packet.sender);
     line.receive(packet);
     return;
 	}
@@ -578,7 +577,6 @@ function whois(hashname)
   
   // make a new one
   hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], unpaths:[], possible:{}, isAlive:0};
-  hn.address = hashname;
   hn.at = Date.now();
   hn.bucket = dhash(self.hashname, hashname);
   if(!self.buckets[hn.bucket]) self.buckets[hn.bucket] = [];
@@ -586,16 +584,6 @@ function whois(hashname)
   // to create a new channels to this hashname
   hn.start = channel;
   hn.raw = raw;
-
-  // different timeout values based on if there's possibly a nat between us
-  hn.timeout = function()
-  {
-    var ip4 = hn.address.split(",")[1];
-    // no ipv4 path, no nat
-    if(!ip4 || !self.paths.lan4) return defaults.idle_timeout;
-    // if one is local and the other is not
-    return (isLocalIP(self.paths.lan4.ip) && !isLocalIP(ip4)) ? defaults.nat_timeout : defaults.idle_timeout;
-  }
 
   // manage network information consistently, called on all validated incoming packets
   hn.pathIn = function(path)
@@ -662,7 +650,11 @@ function whois(hashname)
       if(hn.paths.length > 1) setTimeout(hn.sync,1);
 
       // update public ipv4 address
-      if(path.type == "ipv4" && !isLocalIP(path.ip)) hn.address = [hn.hashname,path.ip,path.port].join(",");
+      if(path.type == "ipv4" && !isLocalIP(path.ip))
+      {
+        hn.ip = path.ip;
+        hn.port = path.port;
+      }
       
       // track overall if we trust them as local
       if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip)) hn.isLocal = true;
@@ -712,18 +704,19 @@ function whois(hashname)
       delete hn.vias; // never use more than once
       Object.keys(todo).forEach(function(via){
         var address = todo[via].split(",");
-        if(address.length == 3 && address[1].split(".").length == 4 && parseInt(address[2]) > 0)
+        if(address.length <= 1) return;
+        if(address.length == 4 && address[2].split(".").length == 4 && parseInt(address[3]) > 0)
         {
           // NAT hole punching
-          var path = {type:"ipv4",ip:address[1],port:parseInt(address[2])};
+          var path = {type:"ipv4",ip:address[2],port:parseInt(address[3])};
           self.send(path,local.pencode());
           // if possibly behind the same NAT, set flag to allow/ask to relay a local path
-          if(self.nat && address[1] == (self.paths.pub4 && self.paths.pub4.ip)) hn.relayAsk = "local";
+          if(self.nat && address[2] == (self.paths.pub4 && self.paths.pub4.ip)) hn.relayAsk = "local";
         }else{ // no ip address, must relay
           hn.relayAsk = true;
         }
         // TODO, if we've tried+failed a peer already w/o a relay, add relay
-        self.whois(via).peer(hn.hashname, hn.relayAsk); // send the peer request
+        self.whois(via).peer(hn.hashname, address[1], hn.relayAsk); // send the peer request
       });
     }
     
@@ -785,7 +778,7 @@ function whois(hashname)
     if(typeof address != "string") return warn("invalid see address",address);
     if(!hn.vias) hn.vias = {};
     if(hn.vias[from.hashname]) return;
-    hn.vias[from.hashname] = address; // TODO handle multiple addresses per hn (ipv4+ipv6)
+    hn.vias[from.hashname] = address;
   }
   
   // just make a seek request conveniently
@@ -798,11 +791,21 @@ function whois(hashname)
     });
   }
 
+  // return our address to them
+  hn.address = function(to)
+  {
+    if(!to) return "";
+    var csid = partsMatch(hn.parts,to.parts);
+    if(!csid) return "";
+    if(!hn.ip) return [hn.hashname,csid].join(",");
+    return [hn.hashname,csid,hn.ip,hn.port].join(",");
+  }
+
   // request a new link to them
   hn.link = function(callback)
   {
     var js = {seed:self.seed};
-    js.see = self.buckets[hn.bucket].map(function(hn){ return hn.address; }).slice(0,5);
+    js.see = self.buckets[hn.bucket].map(function(see){ return see.address(hn); }).filter(function(x){return x}).slice(0,5);
     hn.raw("link", {retry:3, js:js}, function(err, packet, chan){
       if(callback) callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
       inLink(err, packet, chan);
@@ -810,8 +813,9 @@ function whois(hashname)
   }
   
   // send a simple lossy peer request, don't care about answer
-  hn.peer = function(hashname, relay)
+  hn.peer = function(hashname, csid, relay)
   {
+    if(!csid || !self.parts[csid]) return;
     var js = {type:"peer", end:true, "peer":hashname, c:local.randomHEX(16)};
     js.paths = [];
     if(self.paths.pub4) js.paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
@@ -824,7 +828,7 @@ function whois(hashname)
       if(self.paths.lan6) js.paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});      
     }
     if(relay || js.paths.length == 0) js.paths.push({type:"relay", id:local.randomHEX(16)});
-    hn.send({js:js});
+    hn.send({js:js, body:local.getkey(self,csid)});
   }
 
   // force send an open packet, direct overrides the network
@@ -1179,7 +1183,7 @@ function channel(type, arg, callback)
     if(ack > chan.outSeq) return warn("bad ack, dropping entirely",chan.outSeq,ack);
 	  var miss = Array.isArray(packet.js.miss) ? packet.js.miss : [];
 	  if(miss.length > 100) {
-      warn("too many misses", miss.length, chan.id, packet.from.address);
+      warn("too many misses", miss.length, chan.id, packet.from.hashname);
 	    miss = miss.slice(0,100);
 	  }
 	  if(miss.length > 0 || ack > chan.lastAck)
@@ -1217,7 +1221,7 @@ function channel(type, arg, callback)
 	  // drop if too far ahead, must ack
 	  if(seq-chan.inDone > defaults.chan_inbuf)
     {
-      warn("chan too far behind, dropping", seq, chan.inDone, chan.id, packet.from.address);
+      warn("chan too far behind, dropping", seq, chan.inDone, chan.id, packet.from.hashname);
       return chan.forceAck = true;
     }
 
@@ -1344,10 +1348,12 @@ function inConnect(err, packet, chan)
 {
   if(!packet.body) return;
   var self = packet.from.self;
-  var der = local.der2der(packet.body);
-  var to = self.whois(local.der2hn(der));
-  if(!to) return warn("invalid connect request from",packet.from.address,packet.js);
-  to.der = der;
+  var to = self.whois(local.parts2hn(packet.js.from));
+  if(!to) return warn("invalid connect request from",packet.from.hashname,packet.js);
+  to.parts = packet.js.from;
+  var csid = partsMatch(self.parts,packet.js.from);
+  var err = local.loadkey(to, csid, packet.body);
+  if(err) return warn("failed to trust given key in connect from",packet.from.hashname,"for",to.hashname,csid,err);
   var sentOpen = to.sentOpen;
 
   // try the suggested paths
@@ -1376,7 +1382,7 @@ function inPeer(err, packet, chan)
   var peer = self.whois(packet.js.peer);
   if(!peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
   // send a single lossy packet
-  var js = {type:"connect", end:true, c:local.randomHEX(16)};
+  var js = {type:"connect", end:true, c:local.randomHEX(16), from:packet.from.parts};
 
   // sanity on incoming paths array
   if(!Array.isArray(packet.js.paths)) packet.js.paths = [];
@@ -1424,14 +1430,14 @@ function inPeer(err, packet, chan)
   }
   
   // must bundle the senders der so the recipient can open them
-  peer.send({js:js, body:packet.from.der});
+  peer.send({js:js, body:packet.body});
 }
 
 // packets coming in to me
 function inRelayMe(err, packet, chan)
 {
   if(err) return; // TODO clean up anything?
-  if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.address);
+  if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
   var self = packet.from.self;
   // create a network path that maps back to this channel
   var path = {type:"relay",id:chan.id,via:packet.from.hashname};
@@ -1445,7 +1451,7 @@ function inRelay(err, packet, chan)
   var self = packet.from.self;
 
   // new relay channel, validate destination
-  if(!isHEX(packet.js.to, 64)) return warn("invalid relay of", packet.js.to, "from", packet.from.address);
+  if(!isHEX(packet.js.to, 64)) return warn("invalid relay of", packet.js.to, "from", packet.from.hashname);
 
   // if it's to us, handle that directly
   if(packet.js.to == self.hashname) return inRelayMe(err, packet, chan);
@@ -1456,7 +1462,7 @@ function inRelay(err, packet, chan)
   // if to someone else
   var to = self.whois(packet.js.to);
   if(to === packet.from) return warn("can't relay to yourself",packet.from.hashname);
-  if(!to || !to.alive) return warn("relay to dead hashname", packet.js.to, packet.from.address);
+  if(!to || !to.alive) return warn("relay to dead hashname", packet.js.to, packet.from.hashname);
 
   // throttle
   if(!packet.from.relayed || Date.now() - packet.from.relayed > 1000)
@@ -1477,7 +1483,7 @@ function inRelay(err, packet, chan)
 function inSeek(err, packet, chan)
 {
   if(err) return;
-  if(!isHEX(packet.js.seek)) return warn("invalid seek of ", packet.js.seek, "from:", packet.from.address);
+  if(!isHEX(packet.js.seek)) return warn("invalid seek of ", packet.js.seek, "from:", packet.from.hashname);
   var self = packet.from.self;
   var seek = packet.js.seek;
 
@@ -1492,7 +1498,7 @@ function inSeek(err, packet, chan)
   links.sort(function(a,b){ return a.age - b.age}).forEach(function(seed){
     if(see.length) return;
     if(!seed.seed) return;
-    see.push(seed.address);
+    see.push(seed.address(packet.from));
     seen[seed.hashname] = true;
   });
 
@@ -1501,7 +1507,7 @@ function inSeek(err, packet, chan)
     if(seen[link.hashname]) return;
     if(link.seed || link.hashname.substr(seek.length) == seek)
     {
-      see.push(link.address);
+      see.push(link.address(packet.from));
       seen[link.hashname] = true;
     }
   });
@@ -1521,13 +1527,13 @@ function inLink(err, packet, chan)
   if(!chan.sentAt)
   {
     var js = {seed:self.seed};
-    js.see = self.buckets[packet.from.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(hn){ return hn.address }).slice(0,8);
+    js.see = self.buckets[packet.from.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(hn){ return hn.address(packet.from) }).slice(0,8);
     // add some distant ones if none
     if(!js.see.length) Object.keys(self.buckets).forEach(function(bucket){
       if(js.see.length >= 8) return;
       self.buckets[bucket].sort(function(a,b){ return a.age - b.age }).forEach(function(seed){
-        if(js.see.length >= 8 || !seed.seed || js.see.indexOf(seed.address) != -1) return;
-        js.see.push(seed.address);
+        if(js.see.length >= 8 || !seed.seed || js.see.indexOf(seed.address(packet.from)) != -1) return;
+        js.see.push(seed.address(packet.from));
       });
     });
     
@@ -1591,9 +1597,8 @@ function inPath(err, packet, chan)
   // if path info from a seed, update our public ip/port
   if(packet.from.isSeed && typeof packet.js.path == "object" && packet.js.path.type == "ipv4" && !isLocalIP(packet.js.path.ip))
   {
-    debug("updating public ipv4",self.address,JSON.stringify(packet.js.path));
+    debug("updating public ipv4",JSON.stringify(self.paths.pub4),JSON.stringify(packet.js.path));
     self.pathSet({type:"pub4", ip:packet.js.path.ip, port:parseInt(packet.js.path.port)})
-    self.address = [self.hashname,packet.js.path.ip,parseInt(packet.js.path.port)].join(",");
   }
   
   // update any optional priority information
