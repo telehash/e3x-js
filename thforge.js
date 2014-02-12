@@ -22,12 +22,6 @@ exports.sjcl = function(lib)
 
 // these are all the crypto/binary dependencies needed by thjs
 exports.genkey = genkey;
-exports.pub2key = pub2key;
-exports.pri2key = pri2key;
-exports.der2hn = der2hn;
-exports.key2der = key2der;
-exports.der2key = der2key;
-exports.der2der = der2der;
 exports.randomHEX = randomHEX;
 exports.openize = openize;
 exports.deopenize = deopenize;
@@ -44,6 +38,7 @@ var CS = {"1":{},"1r":{}};
 exports.parts2hn = function(parts)
 {
   var sorted = Object.keys(parts).sort();
+  if(!sorted.length) return false;
   var values = sorted.map(function(id){return parts[id]});
   return forge.md.sha256.create().update(values.join("")).digest().toHex();
 }
@@ -133,9 +128,12 @@ CS["1r"].genkey = function(ret,cbDone,cbStep)
       if(cbStep) cbStep();
 	    setTimeout(step, 10);
 	  } else {
-      ret["1r"] = forge.util.encode64(asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes());
+      var key = asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes();
+      ret["1r"] = forge.util.encode64(key);
       ret["1r_"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
-      ret.parts["1r"] = der2hn(key2der(state.keys.publicKey));
+      var md = forge.md.sha256.create();
+      md.update(key);
+      ret.parts["1r"] = md.digest().toHex();
       cbDone();
 	  }
 	}
@@ -144,9 +142,20 @@ CS["1r"].genkey = function(ret,cbDone,cbStep)
 
 CS["1r"].loadkey = function(id, pub, priv)
 {
-  id.public = pub2key(pub);
-  id.key = key2der(id.public);
-  if(priv) id.private = pri2key(priv);
+  // take pki or ber format
+  if(pub.length > 300)
+  {
+    if(pub.substr(0,1) == "-") pub = asn1.toDer(pki.publicKeyToAsn1(pki.publicKeyFromPem(key))).bytes();
+    else pub = forge.util.decode64(pub);
+  }
+  id.key = pub;
+  id.public = pki.publicKeyFromAsn1(asn1.fromDer(pub));    
+  // private is only pem/ber format
+  if(priv)
+  {
+    if(priv.substr(0,1) == "-") id.private = pki.privateKeyFromPem(priv);
+    else id.private = pki.privateKeyFromAsn1(asn1.fromDer(forge.util.decode64(priv)));
+  }
   return false;
 }
 
@@ -167,43 +176,6 @@ function genkey(cbDone, cbStep) {
   setTimeout(step);
 }
 
-// der format key to string hashname
-function der2hn(der)
-{
-	var md = forge.md.sha256.create();
-	md.update(der);
-	return md.digest().toHex();	
-}
-
-// ber conversion to local key format
-function pub2key(pub)
-{
-  if(pub.length < 300) return der2key(pub);
-  if(pub.substr(0,1) == "-") return pki.publicKeyFromPem(pub);
-  return der2key(forge.util.decode64(pub));
-}
-function pri2key(pri)
-{
-  if(pri.substr(0,1) == "-") return pki.privateKeyFromPem(pri);
-  return pki.privateKeyFromAsn1(asn1.fromDer(forge.util.decode64(pri)));
-}
-
-// wrapper to get raw der bytes from native key format (or pem) and vice versa
-function key2der(key)
-{
-  if(typeof key == "string") key = pub2key(key);
-  return asn1.toDer(pki.publicKeyToAsn1(key)).bytes();
-}
-function der2key(der)
-{
-  return pki.publicKeyFromAsn1(asn1.fromDer(der));
-}
-
-// validate der
-function der2der(der)
-{
-	return key2der(der2key(der));
-}
 
 // return random bytes, in hex
 function randomHEX(len)
@@ -422,7 +394,7 @@ CS["1r"].deopenize = function(id, open)
 
   ret.key = inner.body;
   ret.js = inner.js;
-	var rsapub = der2key(inner.body);
+	var rsapub = pki.publicKeyFromAsn1(asn1.fromDer(inner.body));
   if(!rsapub) return ret;
 
   // decrypt the signature

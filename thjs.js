@@ -44,13 +44,6 @@ exports.hashname = function(keys, send)
     var err = local.loadkeys(self,keys);
     if(err) return warn("failed to load keys",err);
     self.hashname = local.parts2hn(self.parts);
-  }else{ // legacy
-    if(!keys.public || !keys.private) return warn("bad args to hashname, requires key.public and key.private");
-    if(!local.pub2key(keys.public) || !local.pri2key(keys.private)) return warn("key.public and key.private must be valid pem strings");    
-    self.private = local.pri2key(keys.private);
-    self.public = local.pub2key(keys.public);
-    self.der = local.key2der(self.public);
-    self.hashname = local.der2hn(self.der);
   }
   if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
@@ -101,6 +94,7 @@ exports.hashname = function(keys, send)
 	
 	// map a hashname to an object, whois(hashname)
 	self.whois = whois;
+	self.whokey = whokey;
   
   // connect to the network, online(callback(err))
   self.online = online;
@@ -369,46 +363,13 @@ function bridge(to, callback)
 
 function addSeed(arg) {
   var self = this;
-  if(arg.parts)
-  {
-    var csid = partsMatch(self.parts,arg.parts);
-    if(!csid) return warn("no matching parts",arg);
-    var seed = self.whois(local.parts2hn(arg.parts));
-    if(!seed || !arg.keys) return warn("invalid seed info",arg);
-    seed.parts = arg.parts;
-    var err;
-    if(err = local.loadkey(seed, csid, arg.keys[csid])) return warn("failed to load key",arg.keys[csid],err);
-    if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
-      if(pathMatch(path, seed.unpaths)) return;
-      seed.unpaths.push(path);
-    });
-    if(arg.bridge) seed.bridging = true;
-    seed.isSeed = true;
-    self.seeds.push(seed);
-    return;
-  }
-  
-  // legacy format
-  if(!arg.pubkey) return warn("invalid args to addSeed");
-  var der = local.key2der(arg.pubkey);
-  var seed = self.whois(local.der2hn(der));
+  if(!arg.parts) return warn("invalid args to addSeed",arg);
+  var seed = self.whokey(arg.parts,arg.keys);
   if(!seed) return warn("invalid seed info",arg);
-  seed.der = der;
-  if(arg.ip)
-  {
-    var path = {type:"ipv4", ip:arg.ip, port:arg.port, priority:-2};
-    if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
-  }
-  if(arg.ip6)
-  {
-    var path = {type:"ipv6", ip:arg.ip6, port:arg.port6, priority:-1};
-    if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
-  }
-  if(arg.http)
-  {
-    var path = {type:"http", http:arg.http, priority:-2};
-    if(!pathMatch(path, seed.unpaths)) seed.unpaths.push(path);
-  }
+  if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
+    if(pathMatch(path, seed.unpaths)) return;
+    seed.unpaths.push(path);
+  });
   if(arg.bridge) seed.bridging = true;
   seed.isSeed = true;
   self.seeds.push(seed);
@@ -420,7 +381,7 @@ function online(callback)
   self.isOnline = true;
   // ping lan
   self.lanToken = local.randomHEX(16);
-  self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken}));
+  self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken,from:self.parts}));
 
   var dones = self.seeds.length;
   if(!dones) {
@@ -479,12 +440,8 @@ function receive(msg, path)
     var csid = partsMatch(self.parts,open.js.from);
     if(csid != open.csid) return warn("open with mismatch CSID",csid,open.csid);
 
-    var fromhn = local.parts2hn(open.js.from);
-    var from = self.whois(fromhn);
-    if (!from) return warn("invalid hashname", fromhn);
-    from.parts = open.js.from;
-    var err;
-    if((err = local.loadkey(from, csid, open.key))) return warn("failed to load open key",from.hashname,err);
+    var from = self.whokey(open.js.from,open.key);
+    if (!from) return warn("invalid hashname", open.js.from);
 
     // make sure this open is legit
     if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
@@ -553,6 +510,25 @@ function receive(msg, path)
 	}
   
   if(Object.keys(packet.js).length > 0) warn("dropping incoming packet of unknown type", packet.js, packet.sender);
+}
+
+function whokey(parts, key)
+{
+  var self = this;
+  if(typeof parts != "object") return false;
+  var csid = partsMatch(self.parts,parts);
+  if(!csid) return false;
+  hn = self.whois(local.parts2hn(parts));
+  if(!hn) return false;
+  hn.parts = parts;
+  if(typeof key == "object") key = key[csid]; // convenience for addSeed
+  var err = local.loadkey(hn,csid,key);
+  if(err)
+  {
+    warn("whokey err",hn.hashname,err);
+    return false;
+  }
+  return hn;  
 }
 
 // this creates a hashname identity object (or returns existing)
@@ -1344,12 +1320,8 @@ function inConnect(err, packet, chan)
 {
   if(!packet.body) return;
   var self = packet.from.self;
-  var to = self.whois(local.parts2hn(packet.js.from));
+  var to = self.whokey(packet.js.from,packet.body);
   if(!to) return warn("invalid connect request from",packet.from.hashname,packet.js);
-  to.parts = packet.js.from;
-  var csid = partsMatch(self.parts,packet.js.from);
-  var err = local.loadkey(to, csid, packet.body);
-  if(err) return warn("failed to trust given key in connect from",packet.from.hashname,"for",to.hashname,csid,err);
   var sentOpen = to.sentOpen;
 
   // try the suggested paths
@@ -1676,8 +1648,11 @@ function inLan(self, packet)
   if(self.lanSkip == self.lanToken) return; // often immediate duplicates, skip them
   self.lanSkip = self.lanToken;
   // announce ourself as the seed back
+  var csid = partsMatch(self.parts,packet.js.from);
+  if(!csid) return;
   packet.js.type = "seed";
-  self.send({type:"lan"}, local.pencode(packet.js, self.der));
+  packet.js.from = self.parts;
+  self.send({type:"lan"}, local.pencode(packet.js, local.getkey(self,csid)));
 }
 
 // answers from any LAN broadcast notice we sent
@@ -1686,10 +1661,8 @@ function inLanSeed(self, packet)
   if(packet.js.lan != self.lanToken) return;
   if(self.locals.length >= 5) return warn("locals full");
   if(!packet.body || packet.body.length == 0) return;
-  var der = local.der2der(packet.body);
-  var to = self.whois(local.der2hn(der));
+  var to = self.whokey(packet.from,packet.body);
   if(!to) return warn("invalid lan request from",packet.sender);
-  to.der = der;
   to.local = true;
   debug("local seed open",to.hashname,JSON.stringify(packet.sender));
   to.open(packet.sender);
