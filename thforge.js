@@ -380,6 +380,8 @@ CS["1r"].deopenize = function(id, open)
 
   // decrypt the line key and use it for the aes key
 	var ecpub = id.cs["1r"].private.decrypt(ekey, "RSA-OAEP");
+  ret.linepub = ecPub(ecpub,"secp256r1",32);
+  if(!ret.linepub) return ret;
 	var md = forge.md.sha256.create();
 	md.update(ecpub);
   var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
@@ -443,18 +445,18 @@ CS["1"].openline = function(from, open)
 // set up the line enc/dec keys
 CS["1r"].openline = function(from, open)
 {
-  var ecdhe = ecdh(from.ecc.private, open.ecc);
-//  console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
+  var ecdhe = ecdh(from.ecc.private, open.linepub);
+  console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
 	var md = forge.md.sha256.create()
 	md.update(forge.util.hexToBytes(ecdhe));
 	md.update(forge.util.hexToBytes(from.lineOut));
 	md.update(forge.util.hexToBytes(from.lineIn));
-	from.encKey = md.digest();
+  from.encKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
 	var md = forge.md.sha256.create()
 	md.update(forge.util.hexToBytes(ecdhe));
 	md.update(forge.util.hexToBytes(from.lineIn));
 	md.update(forge.util.hexToBytes(from.lineOut));
-	from.decKey = md.digest();
+  from.decKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
 //	console.log("encKey",from.encKey.toHex(),"decKey",from.decKey.toHex());
 }
 
@@ -530,53 +532,43 @@ CS["1r"].lineize = function(to, packet)
 	var wrap = {type:"line"};
 	wrap.line = to.lineIn;
 	var iv = forge.random.getBytesSync(16);
-	wrap.iv = forge.util.bytesToHex(iv);
 	var buf = pencode(packet.js,packet.body);
-//	console.log("LINE",buf.toHex(),packet.toHex(),wrap.iv,to.encKey.toHex());
 
 	// now encrypt the packet
-	var cipher = forge.aes.createEncryptionCipher(to.encKey.copy(), "CTR");
-	cipher.start(iv);
-	cipher.update(buf);
-	cipher.finish();
-//	console.log("COUT",cipher.output.toHex());
-	return pencode(wrap,cipher.output);
+  var cipher = sjcl.mode.gcm.encrypt(to.encKey, sjcl.codec.hex.toBits(forge.util.bytesToHex(buf.bytes())), sjcl.codec.hex.toBits(forge.util.bytesToHex(iv)), [], 128);
+  var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+
+  var body = forge.util.createBuffer();
+  body.putBytes(iv);
+  body.putBytes(cbody);
+
+	return pencode(wrap,body);
 }
 
 // decrypt the contained packet
 CS["1r"].delineize = function(from, packet)
 {
-	var cipher = forge.aes.createDecryptionCipher(packet.from.decKey.copy(), "CTR");
-	cipher.start(forge.util.hexToBytes(packet.js.iv));
-	cipher.update(forge.util.createBuffer(packet.body));
-	cipher.finish();
-	if(!cipher.output) return "no cipher output";
-	var deciphered = pdecode(cipher.output);
+  if(!packet.body) return "no body";
+  var cbody = forge.util.createBuffer(packet.body);
+  var iv = sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.getBytes(16)));
+  
+  try{
+    var cipher = sjcl.mode.gcm.decrypt(from.decKey, sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.bytes())), iv, [], 128);    
+  }catch(E){
+    return E;
+  }
+  if(!cipher) return "no cipher output";
+  var deciphered = pdecode(forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher)));
 	if(!deciphered) return "invalid decrypted packet";
+
   packet.js = deciphered.js;
   packet.body = deciphered.body;
-  return true;
+  return false;
 }
 
 function ecdh(priv, pub) {
   if(!priv || !pub) return "00";
   var S = pub.multiply(priv);
-  return S.getX().toBigInteger().toString(16);
-}
-
-function ecdhXX(priv, pubbytes, curve, bytes) {
-  var curve = getSECCurveByName(curve).getCurve();
-  var uncompressed = forge.util.createBuffer(pubbytes);
-//console.log(uncompressed.length(), uncompressed.bytes());
-  uncompressed.getByte(); // chop off the 0x04
-  var x = uncompressed.getBytes(bytes);
-  var y = uncompressed.getBytes(bytes);
-console.log(priv, pubbytes, x.length, y.length);
-  if(y.length != bytes) return false;
-  var P = new ECPointFp(curve,
-    curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(x), 16)),
-    curve.fromBigInteger(new BigInteger(forge.util.bytesToHex(y), 16)));
-  var S = P.multiply(priv);
   return S.getX().toBigInteger().toString(16);
 }
 
