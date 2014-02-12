@@ -178,6 +178,7 @@ function der2hn(der)
 // ber conversion to local key format
 function pub2key(pub)
 {
+  if(pub.length < 300) return der2key(pub);
   if(pub.substr(0,1) == "-") return pki.publicKeyFromPem(pub);
   return der2key(forge.util.decode64(pub));
 }
@@ -393,7 +394,7 @@ CS["1"].deopenize = function(id, open)
   // all good, cache+return
   ret.verify = true;
   ret.js = inner.js;
-  console.log("INNER",inner.js);
+  console.log("INNER",inner.js,ret.key.length);
   return ret;
 }
 
@@ -407,58 +408,38 @@ CS["1r"].deopenize = function(id, open)
 
   // decrypt the line key and use it for the aes key
 	var ecpub = id.cs["1r"].private.decrypt(ekey, "RSA-OAEP");
-  console.log("ECPUB",ecpub.length,forge.util.bytesToHex(ecpub));
 	var md = forge.md.sha256.create();
 	md.update(ecpub);
-  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest.bytes())));
+  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
   var iv = sjcl.codec.hex.toBits(unstupid("1",32));
 
 	// now decrypt the inner    
-  var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(body.bytes())), iv, [], 128);
+  var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(body.bytes())), iv, [], 128);
   var ibody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
   var inner = pdecode(ibody);
-  console.log(inner);
-  return ret;
+//  console.log(inner);
+  if(!inner || !inner.js.line) return ret;
 
-
-  ret.linepub = ecPub(pub, "secp160r1", 20);
-  if(!ret.linepub) return ret;
-  var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
-//  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
-  var key = secret.substr(0,32);
-  var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
-  var mbody = body.bytes();
-
-
-  return {verify:false};
-	// decrypt the ecc key
-	var dec = forge.util.decode64(open.js.open);
-	var ecpub = id.private.decrypt(dec, "RSA-OAEP");
-//	console.log(ecpub.length);
-	// compose the aes key
-	var md = forge.md.sha256.create();
-	md.update(ecpub);
-	var cipher = forge.aes.createDecryptionCipher(md.digest(), "CTR");
-	cipher.start(forge.util.hexToBytes(open.js.iv));
-	cipher.update(forge.util.createBuffer(open.body));
-	cipher.finish();
-	var inner = pdecode(cipher.output);
-//	console.log(inner);
+  ret.key = inner.body;
+  ret.js = inner.js;
 	var rsapub = der2key(inner.body);
-//	console.log("from", key2hn(rsapub));
-	// decode the signature
+  if(!rsapub) return ret;
+
+  // decrypt the signature
 	var md = forge.md.sha256.create();
 	md.update(ecpub);
 	md.update(forge.util.hexToBytes(inner.js.line));
-	var cipher = forge.aes.createDecryptionCipher(md.digest(), "CTR");
-	cipher.start(forge.util.hexToBytes(open.js.iv));
-	cipher.update(forge.util.createBuffer(forge.util.decode64(open.js.sig)));
-	cipher.finish();
-	var md = forge.md.sha256.create()
-	md.update(open.body);
-	var verify = false;
-  try{ verify = rsapub.verify(md.digest().bytes(), cipher.output.bytes()); }catch(E){}
-	return {ecc:ecpub, rsa:key2der(rsapub), js:inner.js, verify:verify};
+  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+  var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(csig)), iv, [], 32);
+  var sig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+
+  // validate it
+	var md = forge.md.sha256.create();
+	md.update(body.bytes());
+  try{ ret.verify = rsapub.verify(md.digest().bytes(), sig); }catch(E){}
+
+  console.log("INNER",ret.js,ret.key.length);
+  return ret;
 }
 
 // set up the line enc/dec keys
@@ -646,13 +627,17 @@ function pdecode(packet)
 {
   if(typeof packet == "string") packet = forge.util.createBuffer(packet);
   var len = packet.getInt16(packet);
-  if(packet.length() < len) return console.log("packet too short",len,packet.length(),packet) && false;
+//  if(packet.length() < len) console.log("packet too short",len,packet.length(),packet);
+  if(packet.length() < len) return false;
   var jsonb = packet.getBytes(len);
   var body = packet.getBytes();
   var js;
 	if(len > 0)
 	{
-	  try{ js = JSON.parse(jsonb); } catch(E){ return console.log("parse failed",jsonb) && false; }		
+	  try{ js = JSON.parse(jsonb); } catch(E){
+      console.log("parse failed",E,jsonb);
+      return false;
+    }
 	}else{
 		js = {};
 	}
