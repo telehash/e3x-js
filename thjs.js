@@ -1480,7 +1480,7 @@ function inSeek(err, packet, chan)
     }
   });
 
-  var answer = {end:true, see:see.slice(0,8)};
+  var answer = {end:true, see:see.filter(function(x){return x}).slice(0,8)};
   chan.send({js:answer});
 }
 

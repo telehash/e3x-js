@@ -271,7 +271,8 @@ CS["1r"].openize = function(id, to, open, inner)
   // create the aes key/iv
 	var md = forge.md.sha256.create();
 	md.update(to.ecc.key);
-  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+  var digest = md.digest().bytes();
+  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(digest)));
   var iv = sjcl.codec.hex.toBits(unstupid("1",32));
 
 	// now encrypt the body    
