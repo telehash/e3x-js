@@ -322,7 +322,7 @@ function linkMaint(self)
     debug("link maintenance on bucket",bucket,sorted.length);
     sorted.slice(0,defaults.link_k).forEach(function(hn){
       if(!hn.linked || !hn.alive) return;
-      if((Date.now() - hn.linked.recvAt) < Math.ceil(defaults.link_timer/2)) return; // they ping'd us already recently
+      if((Date.now() - hn.linked.sentAt) < Math.ceil(defaults.link_timer/2)) return; // we sent to them recently
       hn.linked.send({js:{seed:self.seed}});
     });
   });
