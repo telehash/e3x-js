@@ -21,7 +21,6 @@ exports.sjcl = function(lib)
 }
 
 // these are all the crypto/binary dependencies needed by thjs
-exports.genkey = genkey;
 exports.randomHEX = randomHEX;
 exports.openize = openize;
 exports.deopenize = deopenize;
@@ -34,6 +33,7 @@ try{thjs.localize(exports)}catch(E){}
 
 
 var CS = {"1":{},"1r":{}};
+exports.CS = CS;
 
 exports.parts2hn = function(parts)
 {
@@ -83,13 +83,356 @@ exports.genkeys = function(cbDone,cbStep,sets)
   pop();
 }
 
-CS["1"].genkey = function(ret,cbDone,cbStep)
-{
-  var k = ecKey("secp160r1",20);
-  ret["1"] = forge.util.encode64(k.public.uncompressed);
-  ret["1_"] = forge.util.encode64(k.private.uncompressed);
-  ret.parts["1"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
-  cbDone();
+CS["1"] = {
+  genkey:function(ret,cbDone,cbStep)
+  {
+    var k = ecKey("secp160r1",20);
+    ret["1"] = forge.util.encode64(k.public.uncompressed);
+    ret["1_"] = forge.util.encode64(k.private.uncompressed);
+    ret.parts["1"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
+    cbDone();
+  },
+  
+  loadkey:function(id, pub, priv)
+  {
+    id.key = (pub.length == 40) ? pub : forge.util.decode64(pub);
+    console.log("LOADKEY",id.hashname,forge.util.bytesToHex(id.key));
+    if(id.parts && id.parts["1"] != forge.md.sha1.create().update(id.key).digest().toHex()) return "fingerprint mismatch";
+    id.public = ecPub(id.key, "secp160r1", 20);
+    if(!id.public) return "wrong size";
+    if(priv)
+    {
+      var bytes = (priv.length == 20) ? priv : forge.util.decode64(priv);
+      id.private = new BigInteger(unstupid(forge.util.bytesToHex(bytes),40), 16);    
+    }
+    return false;
+  },
+
+  openize:function(id, to, open, inner)
+  {
+    if(!to.ecc) to.ecc = ecKey("secp160r1", 20);
+    // get the shared secret to create the iv+key for the open aes
+    var secret = unstupid(ecdh(to.ecc.private, to.public),40);
+  //  console.log("ECDHE O",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
+    var key = secret.substr(0,32);
+    var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
+
+    // aes-128 the open
+  	var ibody = pencode(inner, id.cs["1"].key);
+  	var cipher = forge.aes.createEncryptionCipher(forge.util.hexToBytes(key), "CTR");
+  	cipher.start(forge.util.hexToBytes(iv));
+  	cipher.update(ibody);
+  	cipher.finish();
+  
+    // prepend the line public key and hmac it  
+    var secret = unstupid(ecdh(id.cs["1"].private, to.public),40);
+    console.log("MACSEC O",secret);
+    var macd = forge.util.createBuffer();
+    macd.putBytes(to.ecc.key);
+    macd.putBytes(cipher.output.bytes());
+    var hmac = forge.hmac.create();
+    hmac.start("sha1", forge.util.hexToBytes(secret));
+    hmac.update(macd.bytes());
+  
+    // create final body
+    var body = forge.util.createBuffer();
+    body.putBytes(hmac.digest().bytes());
+    body.putBytes(macd.bytes());
+    return pencode(open, body);
+  },
+  
+  deopenize:function(id, open)
+  {
+    var ret = {verify:false};
+    if(!open.body) return ret;
+    var body = forge.util.createBuffer(open.body);
+    var mac1 = body.getBytes(20);
+    var pub = body.bytes(40);
+    ret.linepub = ecPub(pub, "secp160r1", 20);
+    if(!ret.linepub) return ret;
+    var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
+  //  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
+    var key = secret.substr(0,32);
+    var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
+    var mbody = body.bytes();
+
+    // aes-128 decipher the inner
+    body.getBytes(40); // remove the prefixed key
+  	var cipher = forge.aes.createDecryptionCipher(forge.util.hexToBytes(key), "CTR");
+  	cipher.start(forge.util.hexToBytes(iv));
+  	cipher.update(body);
+  	cipher.finish();
+  	var inner = pdecode(cipher.output);
+    if(!inner) return ret;
+
+    // verify+load inner key info
+    console.log("INPUB",forge.util.bytesToHex(inner.body));
+    var pub = ecPub(inner.body, "secp160r1", 20);
+    if(!pub) return ret;
+    ret.key = inner.body;
+    if(typeof inner.js.from != "object" || !inner.js.from["1"]) return ret;
+    if(forge.md.sha1.create().update(inner.body).digest().toHex() != inner.js.from["1"]) return ret;
+
+    // verify the hmac
+    var secret = unstupid(ecdh(id.cs["1"].private, pub),40);
+    console.log("MACSEC D",secret);
+    var hmac = forge.hmac.create();
+    hmac.start("sha1", forge.util.hexToBytes(secret));
+    hmac.update(mbody);
+    var mac2 = hmac.digest().bytes();
+    console.log("HMAC",forge.util.bytesToHex(mac1),forge.util.bytesToHex(mac2))
+    if(mac2 != mac1) return ret;
+  
+    // all good, cache+return
+    ret.verify = true;
+    ret.js = inner.js;
+    console.log("INNER",inner.js,ret.key.length);
+    return ret;
+  },
+ 
+  // set up the line enc/dec keys
+  openline:function(from, open)
+  {
+    from.lineIV = 0;
+    var ecdhe = ecdh(from.ecc.private, open.linepub);
+    console.log("ECDHE LINE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
+  	var md = forge.md.sha1.create()
+  	md.update(forge.util.hexToBytes(ecdhe));
+  	md.update(forge.util.hexToBytes(from.lineOut));
+  	md.update(forge.util.hexToBytes(from.lineIn));
+  	from.encKey = forge.util.createBuffer(md.digest().getBytes(16));
+  	var md = forge.md.sha1.create()
+  	md.update(forge.util.hexToBytes(ecdhe));
+  	md.update(forge.util.hexToBytes(from.lineIn));
+  	md.update(forge.util.hexToBytes(from.lineOut));
+  	from.decKey = forge.util.createBuffer(md.digest().getBytes(16));
+  	console.log("encKey",from.encKey.toHex(),"decKey",from.decKey.toHex());
+  },
+
+  lineize:function(to, packet)
+  {
+  	var wrap = {type:"line"};
+  	wrap.line = to.lineIn;
+    var iv = forge.util.hexToBytes(unstupid((to.lineIV++).toString(16),8));
+  	var buf = pencode(packet.js,packet.body);
+  //	console.log("LINE",buf.toHex(),packet.toHex(),wrap.iv,to.encKey.toHex());
+
+  	// now encrypt the packet
+  	var cipher = forge.aes.createEncryptionCipher(to.encKey.copy(), "CTR");
+  	cipher.start(forge.util.hexToBytes(unstupid(forge.util.bytesToHex(iv),32))); // padd out the IV to 16 bytes
+  	cipher.update(buf);
+  	cipher.finish();
+
+    // prepend the IV and hmac it
+    var macd = forge.util.createBuffer();
+    macd.putBytes(iv);
+    macd.putBytes(cipher.output.bytes());
+    var hmac = forge.hmac.create();
+    hmac.start("sha1", to.encKey.bytes());
+    hmac.update(macd.bytes());
+  
+    // create final body
+    var body = forge.util.createBuffer();
+    body.putBytes(hmac.digest().bytes(4));
+    body.putBytes(macd.bytes());
+
+  	console.log("LOUT",wrap,body.toHex());
+
+    return pencode(wrap, body);
+  },
+
+  delineize:function(from, packet)
+  {
+    if(!packet.body) return "no body";
+    var body = forge.util.createBuffer(packet.body);
+    var mac = body.getBytes(4);
+    var hmac = forge.hmac.create();
+    hmac.start("sha1", from.decKey.bytes());
+    hmac.update(body.bytes());
+    if(hmac.digest().bytes(4) != mac) return "invalid hmac";
+
+    var iv = body.getBytes(4);
+  	var cipher = forge.aes.createDecryptionCipher(from.decKey.copy(), "CTR");
+  	cipher.start(forge.util.hexToBytes(unstupid(forge.util.bytesToHex(iv),32)));
+  	cipher.update(body);
+  	cipher.finish();
+  	if(!cipher.output) return "cipher failed";
+  	var deciphered = pdecode(cipher.output);
+  	if(!deciphered) return "invalid decrypted packet";
+    packet.js = deciphered.js;
+    packet.body = deciphered.body;
+    return false;
+  }
+}
+
+CS["1r"] = {
+  genkey:function(ret,cbDone,cbStep)
+  {
+  	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
+  	var step = function() {
+  	  // run for 100 ms
+  	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
+        if(cbStep) cbStep();
+  	    setTimeout(step, 10);
+  	  } else {
+        var key = asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes();
+        ret["1r"] = forge.util.encode64(key);
+        ret["1r_"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
+        var md = forge.md.sha256.create();
+        md.update(key);
+        ret.parts["1r"] = md.digest().toHex();
+        cbDone();
+  	  }
+  	}
+  	setTimeout(step);  
+  },
+
+  loadkey:function(id, pub, priv)
+  {
+    // take pki or ber format
+    if(pub.length > 300)
+    {
+      if(pub.substr(0,1) == "-") pub = asn1.toDer(pki.publicKeyToAsn1(pki.publicKeyFromPem(key))).bytes();
+      else pub = forge.util.decode64(pub);
+    }
+    id.key = pub;
+    id.public = pki.publicKeyFromAsn1(asn1.fromDer(pub));    
+    // private is only pem/ber format
+    if(priv)
+    {
+      if(priv.substr(0,1) == "-") id.private = pki.privateKeyFromPem(priv);
+      else id.private = pki.privateKeyFromAsn1(asn1.fromDer(forge.util.decode64(priv)));
+    }
+    return false;
+  },
+  
+  openize:function(id, to, open, inner)
+  {
+  	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
+    var pubhex = forge.util.bytesToHex(to.ecc.key);
+
+    // create the aes key/iv
+  	var md = forge.md.sha256.create();
+  	md.update(to.ecc.key);
+    var digest = md.digest().bytes();
+    var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(digest)));
+    var iv = sjcl.codec.hex.toBits(unstupid("1",32));
+
+  	// now encrypt the body    
+  	var ibody = pencode(inner, id.cs["1r"].key);
+    var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(ibody.bytes())), iv, [], 128);
+    var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+  //  console.log("SJCL",cbody.length, ibody.length());
+
+  	// sign & encrypt the sig
+  	var md = forge.md.sha256.create();
+  	md.update(cbody);
+  	var sig = id.cs["1r"].private.sign(md);
+  	var md = forge.md.sha256.create();
+  	md.update(to.ecc.key);
+  	md.update(forge.util.hexToBytes(to.lineOut));
+    var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+    var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(sig)), iv, [], 32);
+    var csig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+
+  	// encrypt the ecc key
+    var ekey = to.public.encrypt(to.ecc.key, "RSA-OAEP");
+    console.log("CC",ekey.length,csig.length,cbody.length);
+  
+    var body = forge.util.createBuffer();
+    body.putBytes(ekey);
+    body.putBytes(csig);
+    body.putBytes(cbody);
+
+  	console.log(open, body.length());
+  	var packet = pencode(open, body);
+  	return packet;
+  },
+  
+  deopenize:function(id, open)
+  {
+    var ret = {verify:false};
+    if(!open.body) return ret;
+    var body = forge.util.createBuffer(open.body);
+    var ekey = body.getBytes(256);
+    var csig = body.getBytes(260);
+
+    // decrypt the line key and use it for the aes key
+  	var ecpub = id.cs["1r"].private.decrypt(ekey, "RSA-OAEP");
+    ret.linepub = ecPub(ecpub,"secp256r1",32);
+    if(!ret.linepub) return ret;
+  	var md = forge.md.sha256.create();
+  	md.update(ecpub);
+    var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+    var iv = sjcl.codec.hex.toBits(unstupid("1",32));
+
+  	// now decrypt the inner    
+    var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(body.bytes())), iv, [], 128);
+    var ibody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+    var inner = pdecode(ibody);
+  //  console.log(inner);
+    if(!inner || !inner.js.line) return ret;
+
+    ret.key = inner.body;
+    ret.js = inner.js;
+  	var rsapub = pki.publicKeyFromAsn1(asn1.fromDer(inner.body));
+    if(!rsapub) return ret;
+
+    // decrypt the signature
+  	var md = forge.md.sha256.create();
+  	md.update(ecpub);
+  	md.update(forge.util.hexToBytes(inner.js.line));
+    var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+    var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(csig)), iv, [], 32);
+    var sig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+
+    // validate it
+  	var md = forge.md.sha256.create();
+  	md.update(body.bytes());
+    try{ ret.verify = rsapub.verify(md.digest().bytes(), sig); }catch(E){}
+
+    console.log("INNER",ret.js,ret.key.length);
+    return ret;
+  },
+  
+  lineize:function(to, packet)
+  {
+  	var wrap = {type:"line"};
+  	wrap.line = to.lineIn;
+  	var iv = forge.random.getBytesSync(16);
+  	var buf = pencode(packet.js,packet.body);
+
+  	// now encrypt the packet
+    var cipher = sjcl.mode.gcm.encrypt(to.encKey, sjcl.codec.hex.toBits(forge.util.bytesToHex(buf.bytes())), sjcl.codec.hex.toBits(forge.util.bytesToHex(iv)), [], 128);
+    var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
+
+    var body = forge.util.createBuffer();
+    body.putBytes(iv);
+    body.putBytes(cbody);
+
+  	return pencode(wrap,body);
+  },
+
+  // decrypt the contained packet
+  delineize:function(from, packet)
+  {
+    if(!packet.body) return "no body";
+    var cbody = forge.util.createBuffer(packet.body);
+    var iv = sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.getBytes(16)));
+  
+    try{
+      var cipher = sjcl.mode.gcm.decrypt(from.decKey, sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.bytes())), iv, [], 128);    
+    }catch(E){
+      return E;
+    }
+    if(!cipher) return "no cipher output";
+    var deciphered = pdecode(forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher)));
+  	if(!deciphered) return "invalid decrypted packet";
+
+    packet.js = deciphered.js;
+    packet.body = deciphered.body;
+    return false;
+  }
 }
 
 function ecPub(pub, curve, bytes)
@@ -103,79 +446,6 @@ function ecPub(pub, curve, bytes)
     curve.fromBigInteger(new BigInteger(unstupid(forge.util.bytesToHex(x),bytes), 16)),
     curve.fromBigInteger(new BigInteger(unstupid(forge.util.bytesToHex(y),bytes), 16)));
 }
-
-CS["1"].loadkey = function(id, pub, priv)
-{
-  id.key = (pub.length == 40) ? pub : forge.util.decode64(pub);
-  console.log("LOADKEY",id.hashname,forge.util.bytesToHex(id.key));
-  if(id.parts && id.parts["1"] != forge.md.sha1.create().update(id.key).digest().toHex()) return "fingerprint mismatch";
-  id.public = ecPub(id.key, "secp160r1", 20);
-  if(!id.public) return "wrong size";
-  if(priv)
-  {
-    var bytes = (priv.length == 20) ? priv : forge.util.decode64(priv);
-    id.private = new BigInteger(unstupid(forge.util.bytesToHex(bytes),40), 16);    
-  }
-  return false;
-}
-
-CS["1r"].genkey = function(ret,cbDone,cbStep)
-{
-	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
-	var step = function() {
-	  // run for 100 ms
-	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
-      if(cbStep) cbStep();
-	    setTimeout(step, 10);
-	  } else {
-      var key = asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes();
-      ret["1r"] = forge.util.encode64(key);
-      ret["1r_"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
-      var md = forge.md.sha256.create();
-      md.update(key);
-      ret.parts["1r"] = md.digest().toHex();
-      cbDone();
-	  }
-	}
-	setTimeout(step);  
-}
-
-CS["1r"].loadkey = function(id, pub, priv)
-{
-  // take pki or ber format
-  if(pub.length > 300)
-  {
-    if(pub.substr(0,1) == "-") pub = asn1.toDer(pki.publicKeyToAsn1(pki.publicKeyFromPem(key))).bytes();
-    else pub = forge.util.decode64(pub);
-  }
-  id.key = pub;
-  id.public = pki.publicKeyFromAsn1(asn1.fromDer(pub));    
-  // private is only pem/ber format
-  if(priv)
-  {
-    if(priv.substr(0,1) == "-") id.private = pki.privateKeyFromPem(priv);
-    else id.private = pki.privateKeyFromAsn1(asn1.fromDer(forge.util.decode64(priv)));
-  }
-  return false;
-}
-
-function genkey(cbDone, cbStep) {
-  var state = rsa.createKeyPairGenerationState(2048, 0x10001);
-  var step = function() {
-    // run for 100 ms
-    if (!rsa.stepKeyPairGenerationState(state, 100)) {
-      if (cbStep) cbStep();
-      setTimeout(step, 10);
-    } else {
-      cbDone(null, {
-        public: pki.publicKeyToPem(state.keys.publicKey),
-        private: pki.privateKeyToPem(state.keys.privateKey)
-      });
-    }
-  }
-  setTimeout(step);
-}
-
 
 // return random bytes, in hex
 function randomHEX(len)
@@ -230,83 +500,6 @@ function openize(id, to)
   return CS[to.csid].openize(id, to, open, inner);
 }
 
-CS["1"].openize = function(id, to, open, inner)
-{
-  if(!to.ecc) to.ecc = ecKey("secp160r1", 20);
-  // get the shared secret to create the iv+key for the open aes
-  var secret = unstupid(ecdh(to.ecc.private, to.public),40);
-//  console.log("ECDHE O",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
-  var key = secret.substr(0,32);
-  var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
-
-  // aes-128 the open
-	var ibody = pencode(inner, id.cs["1"].key);
-	var cipher = forge.aes.createEncryptionCipher(forge.util.hexToBytes(key), "CTR");
-	cipher.start(forge.util.hexToBytes(iv));
-	cipher.update(ibody);
-	cipher.finish();
-  
-  // prepend the line public key and hmac it  
-  var secret = unstupid(ecdh(id.cs["1"].private, to.public),40);
-  console.log("MACSEC O",secret);
-  var macd = forge.util.createBuffer();
-  macd.putBytes(to.ecc.key);
-  macd.putBytes(cipher.output.bytes());
-  var hmac = forge.hmac.create();
-  hmac.start("sha1", forge.util.hexToBytes(secret));
-  hmac.update(macd.bytes());
-  
-  // create final body
-  var body = forge.util.createBuffer();
-  body.putBytes(hmac.digest().bytes());
-  body.putBytes(macd.bytes());
-  return pencode(open, body);
-}
-
-CS["1r"].openize = function(id, to, open, inner)
-{
-	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
-  var pubhex = forge.util.bytesToHex(to.ecc.key);
-
-  // create the aes key/iv
-	var md = forge.md.sha256.create();
-	md.update(to.ecc.key);
-  var digest = md.digest().bytes();
-  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(digest)));
-  var iv = sjcl.codec.hex.toBits(unstupid("1",32));
-
-	// now encrypt the body    
-	var ibody = pencode(inner, id.cs["1r"].key);
-  var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(ibody.bytes())), iv, [], 128);
-  var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
-//  console.log("SJCL",cbody.length, ibody.length());
-
-	// sign & encrypt the sig
-	var md = forge.md.sha256.create();
-	md.update(cbody);
-	var sig = id.cs["1r"].private.sign(md);
-	var md = forge.md.sha256.create();
-	md.update(to.ecc.key);
-	md.update(forge.util.hexToBytes(to.lineOut));
-  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
-  var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(sig)), iv, [], 32);
-  var csig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
-
-	// encrypt the ecc key
-  var ekey = to.public.encrypt(to.ecc.key, "RSA-OAEP");
-  console.log("CC",ekey.length,csig.length,cbody.length);
-  
-  var body = forge.util.createBuffer();
-  body.putBytes(ekey);
-  body.putBytes(csig);
-  body.putBytes(cbody);
-
-	console.log(open, body.length());
-	var packet = pencode(open, body);
-	return packet;
-}
-
-
 function deopenize(id, open)
 {
   console.log("DEOPEN",open.body.length);
@@ -322,125 +515,11 @@ function deopenize(id, open)
   return ret;
 }
 
-CS["1"].deopenize = function(id, open)
-{
-  var ret = {verify:false};
-  if(!open.body) return ret;
-  var body = forge.util.createBuffer(open.body);
-  var mac1 = body.getBytes(20);
-  var pub = body.bytes(40);
-  ret.linepub = ecPub(pub, "secp160r1", 20);
-  if(!ret.linepub) return ret;
-  var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
-//  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
-  var key = secret.substr(0,32);
-  var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
-  var mbody = body.bytes();
-
-  // aes-128 decipher the inner
-  body.getBytes(40); // remove the prefixed key
-	var cipher = forge.aes.createDecryptionCipher(forge.util.hexToBytes(key), "CTR");
-	cipher.start(forge.util.hexToBytes(iv));
-	cipher.update(body);
-	cipher.finish();
-	var inner = pdecode(cipher.output);
-  if(!inner) return ret;
-
-  // verify+load inner key info
-  console.log("INPUB",forge.util.bytesToHex(inner.body));
-  var pub = ecPub(inner.body, "secp160r1", 20);
-  if(!pub) return ret;
-  ret.key = inner.body;
-  if(typeof inner.js.from != "object" || !inner.js.from["1"]) return ret;
-  if(forge.md.sha1.create().update(inner.body).digest().toHex() != inner.js.from["1"]) return ret;
-
-  // verify the hmac
-  var secret = unstupid(ecdh(id.cs["1"].private, pub),40);
-  console.log("MACSEC D",secret);
-  var hmac = forge.hmac.create();
-  hmac.start("sha1", forge.util.hexToBytes(secret));
-  hmac.update(mbody);
-  var mac2 = hmac.digest().bytes();
-  console.log("HMAC",forge.util.bytesToHex(mac1),forge.util.bytesToHex(mac2))
-  if(mac2 != mac1) return ret;
-  
-  // all good, cache+return
-  ret.verify = true;
-  ret.js = inner.js;
-  console.log("INNER",inner.js,ret.key.length);
-  return ret;
-}
-
-CS["1r"].deopenize = function(id, open)
-{
-  var ret = {verify:false};
-  if(!open.body) return ret;
-  var body = forge.util.createBuffer(open.body);
-  var ekey = body.getBytes(256);
-  var csig = body.getBytes(260);
-
-  // decrypt the line key and use it for the aes key
-	var ecpub = id.cs["1r"].private.decrypt(ekey, "RSA-OAEP");
-  ret.linepub = ecPub(ecpub,"secp256r1",32);
-  if(!ret.linepub) return ret;
-	var md = forge.md.sha256.create();
-	md.update(ecpub);
-  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
-  var iv = sjcl.codec.hex.toBits(unstupid("1",32));
-
-	// now decrypt the inner    
-  var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(body.bytes())), iv, [], 128);
-  var ibody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
-  var inner = pdecode(ibody);
-//  console.log(inner);
-  if(!inner || !inner.js.line) return ret;
-
-  ret.key = inner.body;
-  ret.js = inner.js;
-	var rsapub = pki.publicKeyFromAsn1(asn1.fromDer(inner.body));
-  if(!rsapub) return ret;
-
-  // decrypt the signature
-	var md = forge.md.sha256.create();
-	md.update(ecpub);
-	md.update(forge.util.hexToBytes(inner.js.line));
-  var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
-  var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(csig)), iv, [], 32);
-  var sig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
-
-  // validate it
-	var md = forge.md.sha256.create();
-	md.update(body.bytes());
-  try{ ret.verify = rsapub.verify(md.digest().bytes(), sig); }catch(E){}
-
-  console.log("INNER",ret.js,ret.key.length);
-  return ret;
-}
-
 // set up the line enc/dec keys
 function openline(from, open)
 {
   from.csid = open.csid;
   CS[open.csid].openline(from, open);
-}
-
-// set up the line enc/dec keys
-CS["1"].openline = function(from, open)
-{
-  from.lineIV = 0;
-  var ecdhe = ecdh(from.ecc.private, open.linepub);
-  console.log("ECDHE LINE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
-	var md = forge.md.sha1.create()
-	md.update(forge.util.hexToBytes(ecdhe));
-	md.update(forge.util.hexToBytes(from.lineOut));
-	md.update(forge.util.hexToBytes(from.lineIn));
-	from.encKey = forge.util.createBuffer(md.digest().getBytes(16));
-	var md = forge.md.sha1.create()
-	md.update(forge.util.hexToBytes(ecdhe));
-	md.update(forge.util.hexToBytes(from.lineIn));
-	md.update(forge.util.hexToBytes(from.lineOut));
-	from.decKey = forge.util.createBuffer(md.digest().getBytes(16));
-	console.log("encKey",from.encKey.toHex(),"decKey",from.decKey.toHex());
 }
 
 // set up the line enc/dec keys
@@ -471,100 +550,6 @@ function lineize(to, packet)
 function delineize(from, packet)
 {
   return CS[from.csid].delineize(from, packet);
-}
-
-CS["1"].lineize = function(to, packet)
-{
-	var wrap = {type:"line"};
-	wrap.line = to.lineIn;
-  var iv = forge.util.hexToBytes(unstupid((to.lineIV++).toString(16),8));
-	var buf = pencode(packet.js,packet.body);
-//	console.log("LINE",buf.toHex(),packet.toHex(),wrap.iv,to.encKey.toHex());
-
-	// now encrypt the packet
-	var cipher = forge.aes.createEncryptionCipher(to.encKey.copy(), "CTR");
-	cipher.start(forge.util.hexToBytes(unstupid(forge.util.bytesToHex(iv),32))); // padd out the IV to 16 bytes
-	cipher.update(buf);
-	cipher.finish();
-
-  // prepend the IV and hmac it
-  var macd = forge.util.createBuffer();
-  macd.putBytes(iv);
-  macd.putBytes(cipher.output.bytes());
-  var hmac = forge.hmac.create();
-  hmac.start("sha1", to.encKey.bytes());
-  hmac.update(macd.bytes());
-  
-  // create final body
-  var body = forge.util.createBuffer();
-  body.putBytes(hmac.digest().bytes(4));
-  body.putBytes(macd.bytes());
-
-	console.log("LOUT",wrap,body.toHex());
-
-  return pencode(wrap, body);
-}
-
-CS["1"].delineize = function(from, packet)
-{
-  if(!packet.body) return "no body";
-  var body = forge.util.createBuffer(packet.body);
-  var mac = body.getBytes(4);
-  var hmac = forge.hmac.create();
-  hmac.start("sha1", from.decKey.bytes());
-  hmac.update(body.bytes());
-  if(hmac.digest().bytes(4) != mac) return "invalid hmac";
-
-  var iv = body.getBytes(4);
-	var cipher = forge.aes.createDecryptionCipher(from.decKey.copy(), "CTR");
-	cipher.start(forge.util.hexToBytes(unstupid(forge.util.bytesToHex(iv),32)));
-	cipher.update(body);
-	cipher.finish();
-	if(!cipher.output) return "cipher failed";
-	var deciphered = pdecode(cipher.output);
-	if(!deciphered) return "invalid decrypted packet";
-  packet.js = deciphered.js;
-  packet.body = deciphered.body;
-  return false;
-}
-
-CS["1r"].lineize = function(to, packet)
-{
-	var wrap = {type:"line"};
-	wrap.line = to.lineIn;
-	var iv = forge.random.getBytesSync(16);
-	var buf = pencode(packet.js,packet.body);
-
-	// now encrypt the packet
-  var cipher = sjcl.mode.gcm.encrypt(to.encKey, sjcl.codec.hex.toBits(forge.util.bytesToHex(buf.bytes())), sjcl.codec.hex.toBits(forge.util.bytesToHex(iv)), [], 128);
-  var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
-
-  var body = forge.util.createBuffer();
-  body.putBytes(iv);
-  body.putBytes(cbody);
-
-	return pencode(wrap,body);
-}
-
-// decrypt the contained packet
-CS["1r"].delineize = function(from, packet)
-{
-  if(!packet.body) return "no body";
-  var cbody = forge.util.createBuffer(packet.body);
-  var iv = sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.getBytes(16)));
-  
-  try{
-    var cipher = sjcl.mode.gcm.decrypt(from.decKey, sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.bytes())), iv, [], 128);    
-  }catch(E){
-    return E;
-  }
-  if(!cipher) return "no cipher output";
-  var deciphered = pdecode(forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher)));
-	if(!deciphered) return "invalid decrypted packet";
-
-  packet.js = deciphered.js;
-  packet.body = deciphered.body;
-  return false;
 }
 
 function ecdh(priv, pub) {
