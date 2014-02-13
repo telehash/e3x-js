@@ -1,4 +1,4 @@
-// this file contains all the forge-based crypto and binary/buffer functions
+// this file contains all the crypto and binary/buffer functions
 // it must be required after thjs is loaded, so that it binds all of it's functions into it
 
 (function(exports){
@@ -20,7 +20,6 @@ exports.sjcl = function(lib)
   sjcl = lib;
 }
 
-// these are all the crypto/binary dependencies needed by thjs
 exports.randomHEX = randomHEX;
 exports.openize = openize;
 exports.deopenize = deopenize;
@@ -594,4 +593,4 @@ function pdecode(packet)
   return {js:js, body:body};
 }
 
-})(typeof exports === 'undefined'? this['thforge']={}: exports);
+})(typeof exports === 'undefined'? this['thcrypt']={}: exports);

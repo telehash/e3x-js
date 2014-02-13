@@ -33,14 +33,14 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         <script src="../includes/prng4.js"></script>
         <script src="../includes/rng.js"></script>
       	<script src="../thjs.js"></script>
-      	<script src="../thforge.js"></script>
+      	<script src="../thcrypt.js"></script>
       	<script src="../thweb.js"></script>
       	<script src="../seeds.js"></script>
         <script src="socket.io.js"></script>
         <script>
         var me; // make global for console testing
-        thforge.forge(forge);
-        thforge.sjcl(sjcl);
+        thcrypt.forge(forge);
+        thcrypt.sjcl(sjcl);
         var sets = {"1":true}; // only use CS0 by default in the browser, others are slow
         thjs.debug(function(){console.log.apply(console,arguments)});
         function getId(callback)
@@ -55,7 +55,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
 
         	// generate/save one nicely
         	//window.alert("generating private local id, this only happens once and should be less than 30 seconds");
-          thforge.genkeys(function(err, keys){
+          thcrypt.genkeys(function(err, keys){
             if(err) return window.alert("error: "+err);
            keys.nick = window.prompt("enter a nickname");
         		localStorage.thid = JSON.stringify(keys);

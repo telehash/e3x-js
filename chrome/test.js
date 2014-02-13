@@ -3,7 +3,7 @@ window.onload = load;
 function load()
 {
   console.log("loaded");
-  thforge.forge(forge);
+  thcrypt.forge(forge);
   thjs.debug(function(){console.log.apply(console,arguments)});
   getId(function(id){
     udp.create(function(sock){
@@ -51,7 +51,7 @@ function getId(callback)
 {
 	chrome.storage.local.get(["public","private"], function(id){
 	  if(id.public) return seeds(id, callback);
-    thforge.genkey(function(err, id){
+    thcrypt.genkeys(function(err, id){
       chrome.storage.local.set(id);
       seeds(id, callback);
     });
