@@ -886,9 +886,10 @@ function whois(hashname)
       // our outgoing priority of this path
       js.priority = (path.type == "relay") ? 0 : 1;
       if(alts.length > 0) js.paths = alts;
+      var lastIn = path.lastIn;
       hn.raw("path",{js:js, timeout:3000, to:path}, function(err, packet){
-        // when it actually errored, invalidate it
-        if(err && err !== true) path.lastIn = 0;
+        // when it actually errored and hasn't been active, invalidate it
+        if(err && err !== true && path.lastIn == lastIn) path.lastIn = 0;
         else inPath(true, packet); // handles any response .priority and .paths
         // processed all paths, done
         if((--refcnt) == 0) callback();
