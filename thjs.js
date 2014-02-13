@@ -316,7 +316,7 @@ function linkMaint(self)
     if(sorted.length) debug("link maintenance on bucket",bucket,sorted.length);
     sorted.slice(0,defaults.link_k).forEach(function(hn){
       if(!hn.linked || !hn.alive) return;
-      if((Date.now() - hn.linked.recvAt) < Math.ceil(defaults.link_timer/2)) return; // they ping'd us already recently
+      if((Date.now() - hn.linked.sentAt) < Math.ceil(defaults.link_timer/2)) return; // we sent to them recently
       hn.linked.send({js:{seed:self.seed}});
     });
   });
@@ -657,7 +657,10 @@ function whois(hashname)
       if(packet.to) return self.send(packet.to, lined, hn);
 
       // send to the default best path
-      if(pathValid(hn.to)) return self.send(hn.to, lined, hn);
+      if(hn.to) self.send(hn.to, lined, hn);
+
+      // if it was good, we're done, if not fall through
+      if(pathValid(hn.to)) return;
     }
 
     // we've fallen through, either no line, or no valid paths
