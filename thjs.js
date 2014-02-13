@@ -686,7 +686,10 @@ function whois(hashname)
       if(packet.to) return self.send(packet.to, lined, hn);
 
       // send to the default best path
-      if(pathValid(hn.to)) return self.send(hn.to, lined, hn);
+      if(hn.to) self.send(hn.to, lined, hn);
+
+      // if it was good, we're done, if not fall through
+      if(pathValid(hn.to)) return;
     }
 
     // we've fallen through, either no line, or no valid paths
