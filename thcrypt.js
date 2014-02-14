@@ -114,7 +114,7 @@ CS["1"] = {
     var secret = unstupid(ecdh(to.ecc.private, to.public),40);
   //  console.log("ECDHE O",secret.length, secret, forge.util.bytesToHex(to.key), forge.util.bytesToHex(to.ecc.key));
     var key = secret.substr(0,32);
-    var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
+    var iv = unstupid("1",32);
 
     // aes-128 the open
   	var ibody = pencode(inner, id.cs["1"].key);
@@ -152,7 +152,7 @@ CS["1"] = {
     var secret = unstupid(ecdh(id.cs["1"].private, ret.linepub),40);
   //  console.log("ECDHE D",secret.length, secret, forge.util.bytesToHex(id.cs["1"].key), forge.util.bytesToHex(pub));
     var key = secret.substr(0,32);
-    var iv = unstupid(secret.substr(32,8),32); // left zero pad the remainder as the IV
+    var iv = unstupid("1",32);
     var mbody = body.bytes();
 
     // aes-128 decipher the inner
@@ -394,6 +394,23 @@ CS["1r"] = {
     return ret;
   },
   
+  openline:function(from, open)
+  {
+    var ecdhe = ecdh(from.ecc.private, open.linepub);
+    console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
+  	var md = forge.md.sha256.create()
+  	md.update(forge.util.hexToBytes(ecdhe));
+  	md.update(forge.util.hexToBytes(from.lineOut));
+  	md.update(forge.util.hexToBytes(from.lineIn));
+    from.encKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+  	var md = forge.md.sha256.create()
+  	md.update(forge.util.hexToBytes(ecdhe));
+  	md.update(forge.util.hexToBytes(from.lineIn));
+  	md.update(forge.util.hexToBytes(from.lineOut));
+    from.decKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
+  //	console.log("encKey",from.encKey.toHex(),"decKey",from.decKey.toHex());
+  },
+
   lineize:function(to, packet)
   {
   	var wrap = {type:"line"};
@@ -501,7 +518,7 @@ function openize(id, to)
 
 function deopenize(id, open)
 {
-  console.log("DEOPEN",open.body.length);
+//  console.log("DEOPEN",open.body.length);
   // have to try all we support
   var ret;
   Object.keys(id.cs).forEach(function(csid){
@@ -519,24 +536,6 @@ function openline(from, open)
 {
   from.csid = open.csid;
   CS[open.csid].openline(from, open);
-}
-
-// set up the line enc/dec keys
-CS["1r"].openline = function(from, open)
-{
-  var ecdhe = ecdh(from.ecc.private, open.linepub);
-  console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
-	var md = forge.md.sha256.create()
-	md.update(forge.util.hexToBytes(ecdhe));
-	md.update(forge.util.hexToBytes(from.lineOut));
-	md.update(forge.util.hexToBytes(from.lineIn));
-  from.encKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
-	var md = forge.md.sha256.create()
-	md.update(forge.util.hexToBytes(ecdhe));
-	md.update(forge.util.hexToBytes(from.lineIn));
-	md.update(forge.util.hexToBytes(from.lineOut));
-  from.decKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
-//	console.log("encKey",from.encKey.toHex(),"decKey",from.decKey.toHex());
 }
 
 // encrypt the packet

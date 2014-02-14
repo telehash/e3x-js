@@ -364,7 +364,7 @@ function bridge(to, callback)
 function addSeed(arg) {
   var self = this;
   if(!arg.parts) return warn("invalid args to addSeed",arg);
-  var seed = self.whokey(arg.parts,arg.keys);
+  var seed = self.whokey(arg.parts,false,arg.keys);
   if(!seed) return warn("invalid seed info",arg);
   if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
     if(pathMatch(path, seed.unpaths)) return;
@@ -512,7 +512,7 @@ function receive(msg, path)
   if(Object.keys(packet.js).length > 0) warn("dropping incoming packet of unknown type", packet.js, packet.sender);
 }
 
-function whokey(parts, key)
+function whokey(parts, key, keys)
 {
   var self = this;
   if(typeof parts != "object") return false;
@@ -521,7 +521,7 @@ function whokey(parts, key)
   hn = self.whois(local.parts2hn(parts));
   if(!hn) return false;
   hn.parts = parts;
-  if(typeof key == "object") key = key[csid]; // convenience for addSeed
+  if(keys) key = keys[csid]; // convenience for addSeed
   var err = local.loadkey(hn,csid,key);
   if(err)
   {
