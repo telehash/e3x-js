@@ -36,10 +36,16 @@ exports.CS = CS;
 
 exports.parts2hn = function(parts)
 {
-  var sorted = Object.keys(parts).sort();
-  if(!sorted.length) return false;
-  var values = sorted.map(function(id){return parts[id]});
-  return forge.md.sha256.create().update(values.join("")).digest().toHex();
+  var digests = [];
+  Object.keys(parts).sort().forEach(function(id){
+    digests.push(forge.md.sha256.create().update(id).digest());
+    digests.push(forge.md.sha256.create().update(parts[id]).digest());
+  });
+  var hash = forge.md.sha256.create();
+  digests.forEach(function(digest){
+    hash.update(digest);
+  });
+  return hash.digest().toHex();
 }
 
 exports.getkey = function(id, csid)
