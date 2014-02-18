@@ -41,8 +41,8 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
         var me; // make global for console testing
         thcrypt.forge(forge);
         thcrypt.sjcl(sjcl);
-        var sets = {"1":true}; // only use CS0 by default in the browser, others are slow
-        var sets = false;
+        var sets = {"1a":true}; // only use CS1a by default in the browser, others are pretty slow for a default
+//        var sets = false;
         thjs.debug(function(){console.log.apply(console,arguments)});
         function getId(callback)
         {
