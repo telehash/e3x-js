@@ -530,7 +530,7 @@ function deopenize(id, open)
   var ret;
   Object.keys(id.cs).forEach(function(csid){
     if(ret) return;
-    var dval = CS[csid].deopenize(id, open);
+    try{var dval = CS[csid].deopenize(id, open);}catch(E){return;}
     if(!dval.verify) return;
     ret = dval;
     ret.csid = csid;
