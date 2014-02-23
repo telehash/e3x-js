@@ -43,7 +43,7 @@ exports.parts2hn = function(parts)
   });
   var hash = forge.md.sha256.create();
   digests.forEach(function(digest){
-    hash.update(digest);
+    hash.update(digest.bytes());
   });
   return hash.digest().toHex();
 }
@@ -61,6 +61,7 @@ exports.loadkeys = function(id, keys)
   Object.keys(id.parts).forEach(function(csid){
     id.keys[csid] = keys[csid];
     id.cs[csid] = {};
+    if(!CS[csid]) err = csid+" not supported";
     err = err||CS[csid].loadkey(id.cs[csid], keys[csid], keys[csid+"_"]);
   });
   return err;
@@ -335,8 +336,7 @@ CS["2a"] = {
   	md.update(cbody);
   	var sig = id.cs["2a"].private.sign(md);
   	var md = forge.md.sha256.create();
-  	md.update(to.ecc.key);
-  	md.update(forge.util.hexToBytes(to.lineOut));
+  	md.update(to.ecc.key+forge.util.hexToBytes(to.lineOut));
     var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
     var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(sig)), iv, [], 32);
     var csig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
@@ -386,8 +386,7 @@ CS["2a"] = {
 
     // decrypt the signature
   	var md = forge.md.sha256.create();
-  	md.update(ecpub);
-  	md.update(forge.util.hexToBytes(inner.js.line));
+  	md.update(ecpub+forge.util.hexToBytes(inner.js.line));
     var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(forge.util.bytesToHex(md.digest().bytes())));
     var cipher = sjcl.mode.gcm.decrypt(key, sjcl.codec.hex.toBits(forge.util.bytesToHex(csig)), iv, [], 32);
     var sig = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
@@ -395,9 +394,10 @@ CS["2a"] = {
     // validate it
   	var md = forge.md.sha256.create();
   	md.update(body.bytes());
-    try{ ret.verify = rsapub.verify(md.digest().bytes(), sig); }catch(E){}
+    var digest = md.digest().bytes();
+    try{ ret.verify = rsapub.verify(digest, sig); }catch(E){ var err=E; }
 
-    console.log("INNER",ret.js,ret.key.length);
+//    console.log("INNER",err,ret.js,ret.key.length,forge.util.bytesToHex(digest));
     return ret;
   },
   
