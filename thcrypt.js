@@ -37,15 +37,12 @@ exports.CS = CS;
 exports.parts2hn = function(parts)
 {
   var digests = [];
+  var rollup = "";
   Object.keys(parts).sort().forEach(function(id){
-    digests.push(forge.md.sha256.create().update(id).digest());
-    digests.push(forge.md.sha256.create().update(parts[id]).digest());
+    rollup = forge.md.sha256.create().update(rollup+id).digest().bytes();
+    rollup = forge.md.sha256.create().update(rollup+parts[id]).digest().bytes();
   });
-  var hash = forge.md.sha256.create();
-  digests.forEach(function(digest){
-    hash.update(digest.bytes());
-  });
-  return hash.digest().toHex();
+  return forge.util.bytesToHex(rollup);
 }
 
 exports.getkey = function(id, csid)
@@ -62,7 +59,7 @@ exports.loadkeys = function(id, keys)
     id.keys[csid] = keys[csid];
     id.cs[csid] = {};
     if(!CS[csid]) err = csid+" not supported";
-    err = err||CS[csid].loadkey(id.cs[csid], keys[csid], keys[csid+"_"]);
+    err = err||CS[csid].loadkey(id.cs[csid], keys[csid], keys[csid+"_secret"]);
   });
   return err;
 }
@@ -95,7 +92,7 @@ CS["1a"] = {
   {
     var k = ecKey("secp160r1",20);
     ret["1a"] = forge.util.encode64(k.public.uncompressed);
-    ret["1a_"] = forge.util.encode64(k.private.uncompressed);
+    ret["1a_secret"] = forge.util.encode64(k.private.uncompressed);
     ret.parts["1a"] = forge.md.sha1.create().update(k.public.uncompressed).digest().toHex();
     cbDone();
   },
@@ -284,7 +281,7 @@ CS["2a"] = {
   	  } else {
         var key = asn1.toDer(pki.publicKeyToAsn1(state.keys.publicKey)).bytes();
         ret["2a"] = forge.util.encode64(key);
-        ret["2a_"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
+        ret["2a_secret"] = forge.util.encode64(asn1.toDer(pki.privateKeyToAsn1(state.keys.privateKey)).bytes());
         var md = forge.md.sha256.create();
         md.update(key);
         ret.parts["2a"] = md.digest().toHex();
