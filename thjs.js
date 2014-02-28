@@ -465,7 +465,11 @@ function receive(msg, path)
     if(open.js.line != from.lineIn)
     {
       from.chanIn = 0;
-      // TODO, force end old incoming channel ids
+      Object.keys(from.chans).forEach(function(id){
+        if(id % 2 == from.chanOut % 2) return; // our ids
+        from.chans[id].fail({js:{err:"reset"}});
+        delete from.chans[id];
+      });
     }
 
     // update values
@@ -1039,9 +1043,7 @@ function raw(type, arg, callback)
   {
     if(chan.timer) clearTimeout(chan.timer);
     chan.timer = setTimeout(function(){
-      if(!hn.chans[chan.id]) return; // already gone
-      delete hn.chans[chan.id];
-      chan.callback("timeout",{from:hn,js:{err:"timeout"}},chan);
+      chan.fail({js:{err:"timeout"}});
     }, arg.timeout);
   }
   chan.timeout = function(timeout)
@@ -1059,7 +1061,7 @@ function raw(type, arg, callback)
 	{
     if(!hn.chans[chan.id]) return debug("dropping receive packet to dead channel",chan.id,packet.js)
     // if err'd or ended, delete ourselves
-    if(packet.js.err || packet.js.end) delete hn.chans[chan.id];
+    if(packet.js.err || packet.js.end) chan.fail();
     chan.last = packet.sender; // cache last received network
     chan.recvAt = Date.now();
     chan.callback(packet.js.err||packet.js.end, packet, chan);
@@ -1077,12 +1079,20 @@ function raw(type, arg, callback)
     if(!packet.to && pathValid(chan.last)) packet.to = chan.last; // always send back to the last received for this channel
     hn.send(packet);
     // if err'd or ended, delete ourselves
-    if(packet.js.err || packet.js.end) delete hn.chans[chan.id];
+    if(packet.js.err || packet.js.end) chan.fail();
     timer();
   }
   
-  // dummy stub
-  chan.fail = function(){}
+  chan.fail = function(packet){
+    if(chan.errored) return; // prevent multiple calls
+    delete hn.chans[chan.id];
+    chan.errored = true;
+    if(packet)
+    {
+      packet.from = hn;
+      chan.callback(packet.js.err, packet, chan, function(){});      
+    }
+  }
 
   // send optional initial packet with type set
   if(arg.js)
@@ -1094,7 +1104,7 @@ function raw(type, arg, callback)
     {
       var at = 1000;
       function retry(){
-        if(!hn.chans[chan.id] || chan.recvAt) return; // means we're gone or received a packet
+        if(chan.errored || chan.recvAt) return; // means we're gone or received a packet
         chan.send(arg);
         if(at < 4000) at *= 2;
         arg.retry--;
