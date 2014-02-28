@@ -1701,8 +1701,8 @@ function inLanSeed(self, packet)
   if(packet.js.lan != self.lanToken) return;
   if(self.locals.length >= 5) return warn("locals full");
   if(!packet.body || packet.body.length == 0) return;
-  var to = self.whokey(packet.from,packet.body);
-  if(!to) return warn("invalid lan request from",packet.sender);
+  var to = self.whokey(packet.js.from,packet.body);
+  if(!to) return warn("invalid lan request from",packet.js.from,packet.sender);
   to.local = true;
   debug("local seed open",to.hashname,JSON.stringify(packet.sender));
   to.open(packet.sender);
