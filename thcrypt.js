@@ -563,12 +563,12 @@ function ecdh(priv, pub) {
 // encode a packet
 function pencode(js, body)
 {
-  var jsbuf = forge.util.createBuffer(js?JSON.stringify(js):"", "utf8");
-  var len = jsbuf.length();
+  var head = (typeof js == "number") ? forge.util.createBuffer(String.fromCharCode(js)) : forge.util.createBuffer(js?JSON.stringify(js):"", "utf8");
+  var len = head.length();
   var ret = forge.util.createBuffer();
   // network order
   ret.putInt16(len);
-  ret.putBytes(jsbuf.getBytes());
+  ret.putBytes(head.getBytes());
   if(typeof body == "string") body = forge.util.createBuffer(body);
   if(body) ret.putBytes(body.bytes());
   return ret;
@@ -579,12 +579,11 @@ function pdecode(packet)
 {
   if(typeof packet == "string") packet = forge.util.createBuffer(packet);
   var len = packet.getInt16(packet);
-//  if(packet.length() < len) console.log("packet too short",len,packet.length(),packet);
   if(packet.length() < len) return false;
-  var jsonb = packet.getBytes(len);
+  var head = packet.getBytes(len);
   var body = packet.getBytes();
   var js;
-	if(len > 0)
+	if(len > 1)
 	{
 	  try{ js = JSON.parse(jsonb); } catch(E){
       console.log("parse failed",E,jsonb);
@@ -593,7 +592,7 @@ function pdecode(packet)
 	}else{
 		js = {};
 	}
-  return {js:js, body:body};
+  return {js:js, len:len, head:head, body:body};
 }
 
 })(typeof exports === 'undefined'? this['thcrypt']={}: exports);
