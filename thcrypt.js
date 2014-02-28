@@ -84,7 +84,6 @@ exports.loadkey = function(id, csid, key)
 
 exports.genkeys = function(cbDone,cbStep,sets)
 {
-  console.log("GENKEYS",sets);
   if(!sets) sets = {"1a":true,"2a":true}; // default sets to create
   var ret = {parts:{}};
   var todo = Object.keys(sets).filter(function(csid){ return CS[csid];});
@@ -112,7 +111,6 @@ CS["1a"] = {
   loadkey:function(id, pub, priv)
   {
     id.key = (pub.length == 40) ? pub : forge.util.decode64(pub);
-    console.log("LOADKEY",id.hashname,forge.util.bytesToHex(id.key));
     if(id.parts && id.parts["1a"] != forge.md.sha1.create().update(id.key).digest().toHex()) return "fingerprint mismatch";
     id.public = ecPub(id.key, "secp160r1", 20);
     if(!id.public) return "wrong size";
@@ -142,7 +140,6 @@ CS["1a"] = {
   
     // prepend the line public key and hmac it  
     var secret = unstupid(ecdh(id.cs["1a"].private, to.public),40);
-    console.log("MACSEC O",secret);
     var macd = forge.util.createBuffer();
     macd.putBytes(to.ecc.key);
     macd.putBytes(cipher.output.bytes());
@@ -182,7 +179,6 @@ CS["1a"] = {
     if(!inner) return ret;
 
     // verify+load inner key info
-    console.log("INPUB",forge.util.bytesToHex(inner.body));
     var pub = ecPub(inner.body, "secp160r1", 20);
     if(!pub) return ret;
     ret.key = inner.body;
@@ -191,18 +187,16 @@ CS["1a"] = {
 
     // verify the hmac
     var secret = unstupid(ecdh(id.cs["1a"].private, pub),40);
-    console.log("MACSEC D",secret);
     var hmac = forge.hmac.create();
     hmac.start("sha1", forge.util.hexToBytes(secret));
     hmac.update(mbody);
     var mac2 = hmac.digest().bytes();
-    console.log("HMAC",forge.util.bytesToHex(mac1),forge.util.bytesToHex(mac2))
     if(mac2 != mac1) return ret;
   
     // all good, cache+return
     ret.verify = true;
     ret.js = inner.js;
-    console.log("INNER",inner.js,ret.key.length);
+//    console.log("INNER",inner.js,ret.key.length);
     return ret;
   },
  
@@ -211,7 +205,7 @@ CS["1a"] = {
   {
     from.lineIV = 0;
     var ecdhe = ecdh(from.ecc.private, open.linepub);
-    console.log("ECDHE LINE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
+//    console.log("ECDHE LINE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
   	var md = forge.md.sha1.create()
   	md.update(forge.util.hexToBytes(ecdhe));
   	md.update(forge.util.hexToBytes(from.lineOut));
@@ -222,7 +216,6 @@ CS["1a"] = {
   	md.update(forge.util.hexToBytes(from.lineIn));
   	md.update(forge.util.hexToBytes(from.lineOut));
   	from.decKey = forge.util.createBuffer(md.digest().getBytes(16));
-  	console.log("encKey",from.encKey.toHex(),"decKey",from.decKey.toHex());
   },
 
   lineize:function(to, packet)
@@ -249,8 +242,6 @@ CS["1a"] = {
     body.putBytes(forge.util.hexToBytes(to.lineIn));
     body.putBytes(hmac.digest().bytes(4));
     body.putBytes(macd.bytes());
-
-  	console.log("LOUT",body.toHex());
 
     return pencode(null, body);
   },
@@ -351,7 +342,6 @@ CS["2a"] = {
 
   	// encrypt the ecc key
     var ekey = to.public.encrypt(to.ecc.key, "RSA-OAEP");
-    console.log("CC",ekey.length,csig.length,cbody.length);
   
     var body = forge.util.createBuffer();
     body.putBytes(ekey);
@@ -411,7 +401,7 @@ CS["2a"] = {
   openline:function(from, open)
   {
     var ecdhe = ecdh(from.ecc.private, open.linepub);
-    console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
+//    console.log("ECDHE",ecdhe.length, ecdhe, from.lineOut, from.lineIn);
   	var md = forge.md.sha256.create()
   	md.update(forge.util.hexToBytes(ecdhe));
   	md.update(forge.util.hexToBytes(from.lineOut));
