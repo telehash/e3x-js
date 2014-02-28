@@ -123,7 +123,7 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
                   });
                   thweb.rtcAdd(me,sockets); // enable webrtc if possible
           	    	console.log("switch created",me);
-          				id.seeds.forEach(me.addSeed, me);
+          				Object.keys(id.seeds).forEach(function(hn){me.addSeed(id.seeds[hn]);});
           				me.online(function(err){
                     if(err){
                       $("#error").html = err;

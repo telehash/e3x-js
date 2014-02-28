@@ -419,19 +419,19 @@ function receive(msg, path)
 	var self = this;
   var packet = local.pdecode(msg);
   if(!packet) return warn("failed to decode a packet from", path, msg.toString());
-  if(Object.keys(packet.js).length == 0) return; // empty packets are NAT pings
+  if(packet.length == 2) return; // empty packets are NAT pings
   
   packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",(typeof msg.length == "function")?msg.length():msg.length, packet.js.type, packet.body && packet.body.length,[path.type,path.ip,path.port,path.id].join(","));
+  debug("in",(typeof msg.length == "function")?msg.length():msg.length, packet.head_length, packet.body_length,[path.type,path.ip,path.port,path.id].join(","));
 
   // handle any LAN notifications
   if(packet.js.type == "lan") return inLan(self, packet);
   if(packet.js.type == "seed") return inLanSeed(self, packet);
 
   // either it's an open
-  if(packet.js.type == "open")
+  if(packet.head.length == 1)
 	{
     var open = local.deopenize(self, packet);
     if (!open || !open.verify) return warn("couldn't decode open",open);
@@ -488,18 +488,20 @@ function receive(msg, path)
 	}
 
   // or it's a line
-  if(packet.js.type == "line")
+  if(packet.head.length == 0)
 	{
-	  var line = packet.from = self.lines[packet.js.line];
+    var lineID = local.lineid(packet.body);
+	  var line = packet.from = self.lines[lineID];
 
 	  // a matching line is required to decode the packet
 	  if(!line) {
-	    if(!self.bridges[packet.js.line]) return debug("unknown line received", packet.js.line, JSON.stringify(packet.sender));
-      debug("BRIDGE",JSON.stringify(self.bridges[packet.js.line]),packet.js.line);
-      if(self.bridgeIVs[packet.js.iv]) return; // drop duplicates
-      self.bridgeIVs[packet.js.iv] = true;
+	    if(!self.bridges[lineID]) return debug("unknown line received", lineID, JSON.stringify(packet.sender));
+      debug("BRIDGE",JSON.stringify(self.bridges[lineID]),lineID);
+      var id = local.hashHEX(packet.body);
+      if(self.bridgeIVs[id]) return; // drop duplicates
+      self.bridgeIVs[id] = true;
       // flat out raw retransmit any bridge packets
-      return self.send(self.bridges[packet.js.line],msg);
+      return self.send(self.bridges[lineID],msg);
 	  }
 
 		// decrypt and process

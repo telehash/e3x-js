@@ -34,6 +34,18 @@ try{thjs.localize(exports)}catch(E){}
 var CS = {"1a":{},"2a":{}};
 exports.CS = CS;
 
+exports.lineid = function(bin)
+{
+  if(!bin) return "";
+  return forge.util.bytesToHex(bin.substr(0,16));
+}
+
+exports.hashHEX = function(bin)
+{
+  if(!bin) return "";
+  return forge.util.bytesToHex(forge.md.sha256.create().update(bin).digest().bytes());
+}
+
 exports.parts2hn = function(parts)
 {
   var digests = [];
@@ -112,7 +124,7 @@ CS["1a"] = {
     return false;
   },
 
-  openize:function(id, to, open, inner)
+  openize:function(id, to, inner)
   {
     if(!to.ecc) to.ecc = ecKey("secp160r1", 20);
     // get the shared secret to create the iv+key for the open aes
@@ -142,7 +154,7 @@ CS["1a"] = {
     var body = forge.util.createBuffer();
     body.putBytes(hmac.digest().bytes());
     body.putBytes(macd.bytes());
-    return pencode(open, body);
+    return pencode(0x1a, body);
   },
   
   deopenize:function(id, open)
@@ -215,11 +227,8 @@ CS["1a"] = {
 
   lineize:function(to, packet)
   {
-  	var wrap = {type:"line"};
-  	wrap.line = to.lineIn;
     var iv = forge.util.hexToBytes(unstupid((to.lineIV++).toString(16),8));
   	var buf = pencode(packet.js,packet.body);
-  //	console.log("LINE",buf.toHex(),packet.toHex(),wrap.iv,to.encKey.toHex());
 
   	// now encrypt the packet
   	var cipher = forge.aes.createEncryptionCipher(to.encKey.copy(), "CTR");
@@ -237,18 +246,20 @@ CS["1a"] = {
   
     // create final body
     var body = forge.util.createBuffer();
+    body.putBytes(forge.util.hexToBytes(to.lineIn));
     body.putBytes(hmac.digest().bytes(4));
     body.putBytes(macd.bytes());
 
-  	console.log("LOUT",wrap,body.toHex());
+  	console.log("LOUT",body.toHex());
 
-    return pencode(wrap, body);
+    return pencode(null, body);
   },
 
   delineize:function(from, packet)
   {
     if(!packet.body) return "no body";
     var body = forge.util.createBuffer(packet.body);
+    var lineID = body.getBytes(16);
     var mac = body.getBytes(4);
     var hmac = forge.hmac.create();
     hmac.start("sha1", from.decKey.bytes());
@@ -310,7 +321,7 @@ CS["2a"] = {
     return false;
   },
   
-  openize:function(id, to, open, inner)
+  openize:function(id, to, inner)
   {
   	if(!to.ecc) to.ecc = ecKey("secp256r1",32);
     var pubhex = forge.util.bytesToHex(to.ecc.key);
@@ -347,8 +358,7 @@ CS["2a"] = {
     body.putBytes(csig);
     body.putBytes(cbody);
 
-  	console.log(open, body.length());
-  	var packet = pencode(open, body);
+  	var packet = pencode(0x2a, body);
   	return packet;
   },
   
@@ -417,8 +427,6 @@ CS["2a"] = {
 
   lineize:function(to, packet)
   {
-  	var wrap = {type:"line"};
-  	wrap.line = to.lineIn;
   	var iv = forge.random.getBytesSync(16);
   	var buf = pencode(packet.js,packet.body);
 
@@ -427,10 +435,11 @@ CS["2a"] = {
     var cbody = forge.util.hexToBytes(sjcl.codec.hex.fromBits(cipher));
 
     var body = forge.util.createBuffer();
+    body.putBytes(forge.util.hexToBytes(to.lineIn));
     body.putBytes(iv);
     body.putBytes(cbody);
 
-  	return pencode(wrap,body);
+  	return pencode(null,body);
   },
 
   // decrypt the contained packet
@@ -438,6 +447,7 @@ CS["2a"] = {
   {
     if(!packet.body) return "no body";
     var cbody = forge.util.createBuffer(packet.body);
+    var lineID = cbody.getBytes(16);
     var iv = sjcl.codec.hex.toBits(forge.util.bytesToHex(cbody.getBytes(16)));
   
     try{
@@ -516,22 +526,17 @@ function openize(id, to)
 	inner.to = to.hashname;
   inner.from = id.parts;
 	inner.line = to.lineOut;
-	var open = {type:"open"};
-  return CS[to.csid].openize(id, to, open, inner);
+  return CS[to.csid].openize(id, to, inner);
 }
 
 function deopenize(id, open)
 {
 //  console.log("DEOPEN",open.body.length);
-  // have to try all we support
   var ret;
-  Object.keys(id.cs).forEach(function(csid){
-    if(ret) return;
-    try{var dval = CS[csid].deopenize(id, open);}catch(E){return;}
-    if(!dval.verify) return;
-    ret = dval;
-    ret.csid = csid;
-  });
+  var csid = open.head.charCodeAt().toString(16);
+  if(!CS[csid]) return {err:"unknown CSID of "+csid};
+  try{ret = CS[csid].deopenize(id, open);}catch(E){return {err:E};}
+  ret.csid = csid;
   return ret;
 }
 
@@ -585,14 +590,14 @@ function pdecode(packet)
   var js;
 	if(len > 1)
 	{
-	  try{ js = JSON.parse(jsonb); } catch(E){
+	  try{ js = JSON.parse(head); } catch(E){
       console.log("parse failed",E,jsonb);
       return false;
     }
 	}else{
 		js = {};
 	}
-  return {js:js, len:len, head:head, body:body};
+  return {js:js, length:packet.length(), head:head, body:body};
 }
 
 })(typeof exports === 'undefined'? this['thcrypt']={}: exports);
