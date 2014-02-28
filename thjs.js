@@ -461,6 +461,13 @@ function receive(msg, path)
     // don't re-process a duplicate open
     if (from.openAt && open.js.at <= from.openAt) return;
 
+    // if new line id, reset incoming channels
+    if(open.js.line != from.lineIn)
+    {
+      from.chanIn = 0;
+      // TODO, force end old incoming channel ids
+    }
+
     // update values
     var line = {};
     from.openAt = open.js.at;
@@ -556,6 +563,8 @@ function whois(hashname)
   if(!self.buckets[hn.bucket]) self.buckets[hn.bucket] = [];
 
   // to create a new channels to this hashname
+  var sort = [self.hashname,hashname].sort();
+  hn.chanOut = (sort[0] == self.hashname) ? 2 : 1;
   hn.start = channel;
   hn.raw = raw;
 
@@ -717,7 +726,7 @@ function whois(hashname)
   hn.receive = function(packet)
   {
 //    if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
-    if(!packet.js || !isHEX(packet.js.c, 32)) return warn("dropping invalid channel packet");
+    if(!packet.js || typeof packet.js.c != "number") return warn("dropping invalid channel packet",packet.js);
 
     debug("LINEIN",JSON.stringify(packet.js));
     hn.recvAt = Date.now();
@@ -727,6 +736,11 @@ function whois(hashname)
     // find any existing channel
     var chan = hn.chans[packet.js.c];
     if(chan) return chan.receive(packet);
+
+    // verify incoming new chan id
+    if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
+    if(packet.js.c < (hn.chanIn-2)) return warn("old channel id",packet.js.c,hn.chanIn);
+    hn.chanIn = packet.js.c;
 
     // start a channel if one doesn't exist, check either reliable or unreliable types
     var listening = {};
@@ -1011,7 +1025,12 @@ function raw(type, arg, callback)
 {
   var hn = this;
   var chan = {type:type, callback:callback};
-  chan.id = arg.id || local.randomHEX(16);
+  chan.id = arg.id;
+  if(!chan.id)
+  {
+    chan.id = hn.chanOut;
+    hn.chanOut += 2;
+  }
 	hn.chans[chan.id] = chan;
   
   // raw channels always timeout/expire after the last sent/received packet
@@ -1093,7 +1112,12 @@ function channel(type, arg, callback)
 {
   var hn = this;
   var chan = {inq:[], outq:[], outSeq:0, inDone:-1, outConfirmed:-1, lastAck:-1, callback:callback};
-  chan.id = arg.id || local.randomHEX(16);
+  chan.id = arg.id;
+  if(!chan.id)
+  {
+    chan.id = hn.chanOut;
+    hn.chanOut += 2;
+  }
 	hn.chans[chan.id] = chan;
   chan.timeout = arg.timeout || defaults.chan_timeout;
   // app originating if no id, be friendly w/ the type, don't double-underscore if they did already
