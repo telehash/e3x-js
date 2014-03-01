@@ -99,27 +99,16 @@ html{color:#000;background:#FFF;}body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pr
               getId(function(id){
           	    var sockets = {};
                 console.log("STARTING")
-          	    	me = thjs.hashname(id, function(path, msg, to) {
-                    if(path.type == "webrtc" && me.paths.webrtc)
-                    {
-                      console.log("sending webrtc", to.hashname, msg.length());
-                      if(!sockets[path.id]) sockets[path.id] = thweb.rtc(me,{to:to.hashname,id:path.id});
-                      sockets[path.id].send(msg.bytes());
-                      return;
+          	    	me = thjs.hashname(id)
+                  me.deliver("http",function(path, msg, to) {
+                    console.log("sending http", to.hashname, msg.length());
+                    if(!sockets[path.http]){
+                      sockets[path.http] = io.connect(path.http);
+                      sockets[path.http].on("packet", function(packet){
+                	    	me.receive(forge.util.decode64(packet.data), path);                        
+                      });
                     }
-                    if(path.type == "http")
-                    {
-                      console.log("sending http", to.hashname, msg.length());
-                      if(!sockets[path.http]){
-                        sockets[path.http] = io.connect(path.http);
-                        sockets[path.http].on("packet", function(packet){
-                  	    	me.receive(forge.util.decode64(packet.data), path);                        
-                        });
-                      }
-                      sockets[path.http].emit("packet", {data: forge.util.encode64(msg.bytes())});
-                      return;                      
-                    }
-                    console.log("dropping ",path.type);
+                    sockets[path.http].emit("packet", {data: forge.util.encode64(msg.bytes())});
                   });
                   thweb.rtcAdd(me,sockets); // enable webrtc if possible
           	    	console.log("switch created",me);

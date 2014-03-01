@@ -72,6 +72,7 @@
     RTCIceCandidate = window.mozRTCIceCandidate || window.RTCIceCandidate || window.webkitRTCIceCandidate;
 
   // add optional webrtc network support to a switch
+  var rtcsocks = {};
   function rtcAdd(sw, conns)
   {
     if(!RTCPeerConnection) return console.log("WebRTC support not found, disabled");
@@ -82,6 +83,11 @@
       chan.send({js:{open:true}});
       conns[chan.id] = thweb.rtc(me, {chan:chan, id:chan.id});
     }
+    sw.deliver("webrtc",function(path,msg,to){
+      console.log("sending webrtc", to.hashname, msg.length());
+      if(!rtcsocks[path.id]) rtcsocks[path.id] = thweb.rtc(sw,{to:to.hashname,id:path.id});
+      rtcsocks[path.id].send(msg.bytes());
+    });
   }
 
   function PeerConnectionHandler(opts) {

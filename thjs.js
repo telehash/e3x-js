@@ -36,7 +36,7 @@ exports.hashname = function(keys, send)
 {
   if(!local) return warn("thjs.localize() needs to be called first");
   if(!keys) return warn("bad args to hashname, requires keys");
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeIVs:{}, TSockets:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, TSockets:{}, networks:{}};
 
   if(keys.parts)
   {
@@ -55,25 +55,22 @@ exports.hashname = function(keys, send)
   self.pcounter = 1;
   self.receive = receive;
   // outgoing packets to the network
+  self.deliver = function(type, callback)
+  {
+    self.networks[type] = callback;
+  }
+  self.deliver("relay",fuction(path,msg){
+    if(path.relay.ended) return debug("dropping dead relay");
+    path.relay.send({body:msg});
+  });
 	self.send = function(path, msg, to){
     if(!msg) return warn("send called w/ no packet, dropping");
     if(!path) return warn("send called w/ no network, dropping");
     path.lastOut = Date.now();
-    // a relay network must be resolved to the channel and wrapped/sent that way
-    if(path.type == "relay")
-    {
-      if(path.relay.ended)
-      {
-        debug("dropping dead relay via",path.relay.hashname);
-        if(to && to.to == path) delete to.to;
-        return;
-      }
-      // must include the sender path here to detect double-relay
-      return path.relay.send({sender:path, body:msg});
-    }
-    // hand rest to the external sending function passed in
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
-	  send(path, msg, to);
+    if(self.networks[path.type]) return self.networks[path.type](path,msg,to);
+    // no network support, try a bridge
+    self.bridge(path,msg,to);
 	};
   self.pathSet = function(path)
   {
@@ -276,7 +273,7 @@ exports.channelWraps = {
 // do the maintenance work for links
 function linkLoop(self)
 {
-  self.bridgeIVs = {}; // reset IV cache for any bridging
+  self.bridgeCache = {}; // reset cache for any bridging
 //  hnReap(self); // remove any dead ones, temporarily disabled due to node crypto compiled cleanup bug
   linkMaint(self); // ping all of them
   setTimeout(function(){linkLoop(self)}, defaults.link_timer);
@@ -321,43 +318,49 @@ function linkMaint(self)
   });
 }
 
-// try to create a bridge to them
-function bridge(to, callback)
+// try finding a bridge
+function bridge(path, msg, to)
 {
   var self = this;
-  debug("trying to start a bridge",to.hashname,JSON.stringify(to.possible));
-  if(Object.keys(to.possible).length == 0) return callback(); // no possible paths to bridge to
+  if(msg.head.length) return; // only bridge line packets
+  if(!to) return; // require to for line info
 
-  var found;
-  function start(via, path)
-  {
-    // try to find a better path type we know the bridge supports
-    if(!path) via.paths.forEach(function(p){
-      if(!path || to.possible[p.type]) path = to.possible[p.type];
-    });
-    via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
-      // TODO we can try another path and/or via?
-      if(end !== true) debug("failed to create bridge",end,via.hashname);
-      callback((end==true)?packet.sender:false, via);
-    });    
-  }
   
-  // if there's a bridge volunteer for them already
-  if(to.possible.bridge && to.possible.bridge.via) return start(self.whois(to.possible.bridge.via), to.possible.bridge);
+  // check for existing bridge
+  var existing = pathMatch(path,to.bridges);
+  if(existing)
+  {
+    if(existing.bridged) return self.send(existing.bridged,msg); // leave off to to prevent loops
+    existing.bridgeq = msg; // queue most recent packet;
+    return;
+  }
 
-  // find any bridge supporting seed
-  Object.keys(self.seeds).forEach(function(seed){
-    if(found) return;
-    seed = self.seeds[seed];
-    if(!seed.alive || !seed.bridging) return;
-    found = true;
-    start(seed);
+  if(!self.bridges[path.type]) return;
+  debug("bridging",JSON.stringify(path.json),to.hashname);
+
+  // TODO, better selection of a bridge?
+  var via;
+  Object.keys(self.bridges[path.type]).forEach(function(id){
+    var hn = self.whois(id);
+    if(hn.alive) via = hn;
   });
+  
+  if(!via) return debug("couldn't find a bridge host");
 
-  // worst case, blind attempt to bridge through the relay
-  if(!found && to.to && to.to.type == "relay") return start(self.whois(to.to.via));
-
-  if(!found) return callback();
+  // stash this so that any more bridge's don't spam
+  if(!to.bridges) to.bridges = [];
+  path.bridgeq = msg;
+  to.bridges.push(path);
+  
+  // create the bridge
+  via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
+    // TODO we can try another one if failed?
+    if(end !== true) return debug("failed to create bridge",end,via.hashname);
+    // create our mapping!
+    path.bridged = packet.sender;
+    self.send(packet.sender,path.bridgeq);
+    delete path.bridgeq;
+  });    
 }
 
 function addSeed(arg) {
@@ -500,13 +503,13 @@ function receive(msg, path)
 
 	  // a matching line is required to decode the packet
 	  if(!line) {
-	    if(!self.bridges[lineID]) return debug("unknown line received", lineID, JSON.stringify(packet.sender));
-      debug("BRIDGE",JSON.stringify(self.bridges[lineID]),lineID);
+	    if(!self.bridgeLine[lineID]) return debug("unknown line received", lineID, JSON.stringify(packet.sender));
+      debug("BRIDGE",JSON.stringify(self.bridgeLine[lineID]),lineID);
       var id = local.hashHEX(packet.body);
-      if(self.bridgeIVs[id]) return; // drop duplicates
-      self.bridgeIVs[id] = true;
+      if(self.bridgeCache[id]) return; // drop duplicates
+      self.bridgeCache[id] = true;
       // flat out raw retransmit any bridge packets
-      return self.send(self.bridges[lineID],msg);
+      return self.send(self.bridgeLine[lineID],msg);
 	  }
 
 		// decrypt and process
@@ -831,6 +834,7 @@ function whois(hashname)
       if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
       // create a network path that maps back to this channel
       var path = {type:"relay",relay:chan};
+      if(packet.js.bridge) path = packet.sender; // sender is offering to bridge, use them!
       self.receive(packet.body, path);
     });
   }
@@ -1350,6 +1354,7 @@ function inConnect(err, packet, chan)
   {
     // create a virtual network path that maps back to this channel
     var path = {type:"relay",relay:chan};
+    if(packet.js.bridge) path = packet.sender; // sender is offering to bridge, use them!
     self.receive(packet.body, path);
     return;
   }
@@ -1369,7 +1374,7 @@ function inConnect(err, packet, chan)
   chan.send({body:to.open()});
 }
 
-function relay(from, to, packet)
+function relay(self, from, to, packet)
 {
   if(from.ended && !to.ended) return to.fail({js:{err:"disconnected"}});
   if(to.ended && !from.ended) return from.fail({js:{err:"disconnected"}});
@@ -1383,18 +1388,31 @@ function relay(from, to, packet)
   from.relays++;
   if(from.relays > 5) return debug("relay too fast, dropping",from.relays);
 
+  // check to see if we should set the bridge flag for line packets
+  var js;
+  if(self.bridging)
+  {
+    if(packet.head.length == 0 && !to.bridged)
+    {
+      to.bridged = true;
+      self.bridgeLine[local.lineid(packet.body)] = to.last;
+    }
+    // have to seen both directions to bridge
+    if(from.bridged && to.bridged) js = {"bridge":true};
+  }
+
   from.relayed = Date.now();
-  to.send({body:packet.body});
+  to.send({js:js, body:packet.body});
 }
 
 // be the middleman to help NAT hole punch
 function inPeer(err, packet, chan)
 {
-  if(chan.relay) return relay(chan, chan.relay, packet)
-
-  if(!isHEX(packet.js.peer, 64)) return;
+  if(err) return;
   var self = packet.from.self;
-  
+  if(chan.relay) return relay(self, chan, chan.relay, packet);
+
+  if(!isHEX(packet.js.peer, 64)) return;  
   var peer = self.whois(packet.js.peer);
   if(!peer || !peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
   var js = {from:packet.from.parts};
@@ -1416,7 +1434,7 @@ function inPeer(err, packet, chan)
 
   // must bundle the senders key so the recipient can open them
   chan.relay = peer.raw("connect",{js:js, body:packet.body},function(err, packet, chan2){
-    mirror(chan2,chan,packet);
+    relay(self, chan2, chan, packet);
   });
 }
 
@@ -1477,6 +1495,8 @@ function inLink(err, packet, chan)
         js.see.push(seed.address(packet.from));
       });
     });
+
+    if(self.bridging) js.bridges = Object.keys(self.networks);
     
     // TODO, check link_max and end it or evict another
     chan.send({js:js});
@@ -1486,6 +1506,12 @@ function inLink(err, packet, chan)
   if(Array.isArray(packet.js.see)) packet.js.see.forEach(function(address){
     var hn = self.whois(address);
     if(hn && self.buckets[hn.bucket].length < defaults.link_k) hn.link();
+  });
+  
+  // check for bridges
+  if(Array.isArray(packet.js.bridges)) packet.js.bridges.forEach(function(type){
+    if(!self.bridges[type]) self.bridges[type] = {};
+    self.bridges[type][packet.from.hashname] = Date.now();
   });
 
   // add in this link
@@ -1585,14 +1611,10 @@ function inBridge(err, packet, chan)
     packet.js.path = local;
   }
 
-  if(!packet.from.bridges) packet.from.bridges = {};
-  packet.from.bridges[packet.js.to] = packet.from.bridges[packet.js.from] = true; // so we can clean up entries at some point
-
   // set up the actual bridge paths
   debug("BRIDGEUP",JSON.stringify(packet.js));
-  self.bridges[packet.js.to] = packet.js.path;
-  self.bridges[packet.js.from] = packet.sender;
-  self.bridges[packet.js.to].via = self.bridges[packet.js.from].via = packet.from.hashname;
+  self.bridgeLine[packet.js.to] = packet.js.path;
+  self.bridgeLine[packet.js.from] = packet.sender;
 
   chan.send({js:{end:true}});
 }
@@ -1686,6 +1708,7 @@ function hex2nib(hex)
 function pathMatch(path1, paths)
 {
   var match;
+  if(!Array.isArray(paths)) return match;
   paths.forEach(function(path2){
     switch(path1.type)
     {

@@ -7,4 +7,5 @@ If you're looking to use this in node, check out the [node-telehash](https://git
 
 An example of it as a chrome app/extension making use of the native UDP networking is in the [chrome](chrome) folder.
 
-The crypto that powers this is only possible thanks to the incredible work done by the team behind [Forge](https://github.com/digitalbazaar/forge) and [Tom Wu](http://www-cs-students.stanford.edu/~tjw/).
+The crypto that powers this is only possible thanks to the incredible work done by the team behind [Forge](https://github.com/digitalbazaar/forge), [Tom Wu](http://www-cs-students.stanford.edu/~tjw/), and the [Sanford Javascript Crypto Library](https://github.com/bitwiseshiftleft/sjcl).
+
