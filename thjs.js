@@ -56,20 +56,20 @@ exports.hashname = function(keys, send)
   self.receive = receive;
   // outgoing packets to the network
 	self.send = function(path, msg, to){
+    if(!msg) return warn("send called w/ no packet, dropping");
     if(!path) return warn("send called w/ no network, dropping");
     path.lastOut = Date.now();
     // a relay network must be resolved to the channel and wrapped/sent that way
     if(path.type == "relay")
     {
-      var via = self.whois(path.via);
-      if(!via || !via.chans[path.id] || !via.alive)
+      if(path.relay.ended)
       {
-        debug("dropping dead relay via",JSON.stringify(path),via&&via.alive);
+        debug("dropping dead relay via",path.relay.hashname);
         if(to && to.to == path) delete to.to;
         return;
       }
       // must include the sender path here to detect double-relay
-      return via.chans[path.id].send({sender:path, js:{type:"relay",to:to.hashname}, body:msg});
+      return path.relay.send({sender:path, body:msg});
     }
     // hand rest to the external sending function passed in
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
@@ -135,7 +135,6 @@ exports.hashname = function(keys, send)
 	self.raws["peer"] = inPeer;
 	self.raws["connect"] = inConnect;
 	self.raws["seek"] = inSeek;
-	self.raws["relay"] = inRelay;
 	self.raws["path"] = inPath;
 	self.raws["bridge"] = inBridge;
 	self.raws["link"] = inLink;
@@ -445,11 +444,9 @@ function receive(msg, path)
 
     // make sure this open is legit
     if (typeof open.js.at != "number") return warn("invalid at", open.js.at);
-    if(from.openAt)
-    {
-      if(open.js.at <= from.openAt) return; // ignore dups
-      from.sentOpen = 0; // make sure we send a new open
-    }
+
+    // duplicate open and there's newer line packets, ignore it
+    if(from.openAt && open.js.at <= from.openAt && from.lineAt == from.openAt) return;
 
     // open is legit!
     debug("inOpen verified", from.hashname);
@@ -457,9 +454,6 @@ function receive(msg, path)
 
     // add this path in
     path = from.pathIn(path);
-
-    // don't re-process a duplicate open
-    if (from.openAt && open.js.at <= from.openAt) return;
 
     // if new line id, reset incoming channels
     if(open.js.line != from.lineIn)
@@ -477,8 +471,8 @@ function receive(msg, path)
     from.openAt = open.js.at;
     from.lineIn = open.js.line;
 
-    // this will send an open if needed
-    from.open(path);
+    // send an open back
+    self.send(path,from.open(),from);
 
     // line is open now!
     local.openline(from, open);
@@ -518,6 +512,7 @@ function receive(msg, path)
 		// decrypt and process
     var err;
 	  if((err = local.delineize(packet.from, packet))) return debug("couldn't decrypt line",err,packet.sender);
+    line.lineAt = line.openAt;
     line.receive(packet);
     return;
 	}
@@ -581,13 +576,10 @@ function whois(hashname)
       return path;
     }
     
-    // preserve original
-    if(!path.json) path.json = JSON.parse(JSON.stringify(path));
-
     // relays are special cases, used temporarily and don't get added to .paths
     if(path.type == "relay")
     {
-      if(hn.to && hn.to.id == path.id) return hn.to; // already exists
+      if(hn.to && hn.to.relay == path.relay) return hn.to; // already exists
       debug("relay incoming",hn.hashname,JSON.stringify(path));
       info(hn.hashname,path.type,JSON.stringify(path.json));
       hn.to = path; // set new default relay
@@ -611,6 +603,9 @@ function whois(hashname)
       },10);
       return path;
     }
+
+    // preserve original
+    if(!path.json) path.json = JSON.parse(JSON.stringify(path));
     
     // anything else incoming means hn is alive
     if(!hn.alive) debug("aliving",hn.hashname,JSON.stringify(path));
@@ -682,7 +677,16 @@ function whois(hashname)
     debug("alive failthrough",hn.sendSeek,Object.keys(hn.vias||{}));
     hn.alive = false;
     hn.lastPacket = packet; // will be resent if/when an open is received
-    hn.open(); // always try an open again
+
+    // always send to all known paths, increase resiliency
+    hn.paths.forEach(function(path){
+      self.send(path, hn.open(), hn);
+    });
+
+    // also send to any un-verified paths
+    hn.unpaths.forEach(function(path){
+      self.send(path, hn.open(), hn);
+    });
 
     // also try using any via informtion to create a new line
     function vias()
@@ -811,7 +815,7 @@ function whois(hashname)
   hn.peer = function(hashname, csid, relay)
   {
     if(!csid || !self.parts[csid]) return;
-    var js = {type:"peer", end:true, "peer":hashname, c:local.randomHEX(16)};
+    var js = {"peer":hashname};
     js.paths = [];
     if(self.paths.pub4) js.paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
     if(self.paths.pub6) js.paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
@@ -822,44 +826,22 @@ function whois(hashname)
       if(self.paths.lan4) js.paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
       if(self.paths.lan6) js.paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});      
     }
-    if(relay || js.paths.length == 0) js.paths.push({type:"relay", id:local.randomHEX(16)});
-    hn.send({js:js, body:local.getkey(self,csid)});
+    hn.raw("peer",{js:js, body:local.getkey(self,csid)}, function(err, packet, chan){
+      if(err) return;
+      if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
+      // create a network path that maps back to this channel
+      var path = {type:"relay",relay:chan};
+      self.receive(packet.body, path);
+    });
   }
 
-  // force send an open packet, direct overrides the network
-  hn.open = function(direct)
+  // return the current open packet
+  hn.open = function()
   {
-    if(!hn.public) return; // can't open if no key
-    if(!direct && hn.paths.length == 0 && hn.unpaths.length == 0) return debug("can't open, no paths");
-    // don't send again if we've sent one in the last few sec, prevents connect abuse
-    if(hn.sentOpen && (Date.now() - hn.sentOpen) < 2000) return;
-    hn.sentOpen = Date.now();
-
-    // generate just one open packet, so recipient can dedup easily if they get multiple
-    var open = local.openize(self, hn);
-
-    // send directly if instructed
-    if(direct){
-      if(direct.type == "relay")
-      {
-        var relay = self.whois(direct.via);
-        relay.raw("relay", {id:direct.id, js:{"to":hn.hashname},body:open}, inRelayMe);
-      }else{
-        self.send(direct, open, hn);        
-      }
-      return;
-    }
-
-    // always send to all known paths, increase resiliency
-    hn.paths.forEach(function(path){
-      self.send(path, open, hn);
-    });
-
-    // also send to any un-verified paths
-    hn.unpaths.forEach(function(path){
-      self.send(path, open, hn);
-    });
-
+    if(!hn.public) return false; // can't open if no key
+    if(hn.opened) return hn.opened;
+    hn.opened = local.openize(self,hn);
+    return hn.opened;
   }
   
   // send a full network path sync, callback(true||false) if err (no networks)
@@ -922,7 +904,7 @@ function whois(hashname)
   {
     if(!pathname) pathname = "/";
     // passing id forces internal/unescaped mode
-    var chan = hn.start("ts",{id:local.randomHEX(16),js:{path:pathname}});
+    var chan = hn.start("ts",{bare:true,js:{path:pathname}});
     chan.wrap("TS");
     return chan.socket;
   }
@@ -935,6 +917,7 @@ function seek(hn, callback)
 {
   var self = this;
   if(typeof hn == "string") hn = self.whois(hn);
+  if(!callback) callback = function(){};
   if(!hn) return callback("invalid hashname");
 
   var did = {};
@@ -1084,9 +1067,9 @@ function raw(type, arg, callback)
   }
   
   chan.fail = function(packet){
-    if(chan.errored) return; // prevent multiple calls
+    if(chan.ended) return; // prevent multiple calls
     delete hn.chans[chan.id];
-    chan.errored = true;
+    chan.ended = true;
     if(packet)
     {
       packet.from = hn;
@@ -1104,7 +1087,7 @@ function raw(type, arg, callback)
     {
       var at = 1000;
       function retry(){
-        if(chan.errored || chan.recvAt) return; // means we're gone or received a packet
+        if(chan.ended || chan.recvAt) return; // means we're gone or received a packet
         chan.send(arg);
         if(at < 4000) at *= 2;
         arg.retry--;
@@ -1130,8 +1113,8 @@ function channel(type, arg, callback)
   }
 	hn.chans[chan.id] = chan;
   chan.timeout = arg.timeout || defaults.chan_timeout;
-  // app originating if no id, be friendly w/ the type, don't double-underscore if they did already
-  if(!arg.id && type.substr(0,1) !== "_") type = "_"+type;  
+  // app originating if not bare, be friendly w/ the type, don't double-underscore if they did already
+  if(!arg.bare && type.substr(0,1) !== "_") type = "_"+type;  
   chan.type = type; // save for debug
   if(chan.type.substr(0,1) != "_") chan.safe = true; // means don't _ escape the json
   chan.hashname = hn.hashname; // for convenience
@@ -1170,6 +1153,7 @@ function channel(type, arg, callback)
   // simple convenience wrapper to end the channel
   chan.end = function(){
     chan.send({end:true});
+    chan.done();
   };
 
   // errors are hard-send-end
@@ -1358,133 +1342,82 @@ function channel(type, arg, callback)
 // someone's trying to connect to us, send an open to them
 function inConnect(err, packet, chan)
 {
-  if(!packet.body) return;
+  if(err || !packet.body) return;
   var self = packet.from.self;
-  var to = self.whokey(packet.js.from,packet.body);
-  if(!to) return warn("invalid connect request from",packet.from.hashname,packet.js);
-  var sentOpen = to.sentOpen;
+  
+  // if this channel is acting as a relay
+  if(chan.relay)
+  {
+    // create a virtual network path that maps back to this channel
+    var path = {type:"relay",relay:chan};
+    self.receive(packet.body, path);
+    return;
+  }
+
+  chan.relay = self.whokey(packet.js.from,packet.body);
+  if(!chan.relay) return warn("invalid connect request from",packet.from.hashname,packet.js);    
 
   // try the suggested paths
   if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return debug("bad path",JSON.stringify(path));
     // store any path as a possible one
     to.possible[path.type] = path;
-    // if they are offering to provide assistance, stash the sender
-    if(["bridge","relay"].indexOf(path.type) >= 0) path.via = packet.from.hashname;
-    // ignore types that you can't send to directly until you have a line
-    if(["bridge","webrtc"].indexOf(path.type) >= 0) return;
-    to.sentOpen = sentOpen; // restore throttling var since these are all bunched together, could be refactored better as a batch
-    to.open(path);
+    self.send(path,to.open(),to);
   });
   
-  // if we didn't send any, no valid paths, always try a relay
-  if(to.sentOpen == sentOpen) to.open({type:"relay",id:local.randomHEX(16),via:packet.from.hashname});
+  // send back an open through the connect too
+  chan.send({body:to.open()});
+}
+
+function relay(from, to, packet)
+{
+  if(from.ended && !to.ended) return to.fail({js:{err:"disconnected"}});
+  if(to.ended && !from.ended) return from.fail({js:{err:"disconnected"}});
+
+  // throttle
+  if(!from.relayed || Date.now() - from.relayed > 1000)
+  {
+    from.relayed = Date.now();
+    from.relays = 0;
+  }
+  from.relays++;
+  if(from.relays > 5) return debug("relay too fast, dropping",from.relays);
+
+  from.relayed = Date.now();
+  to.send({body:packet.body});
 }
 
 // be the middleman to help NAT hole punch
 function inPeer(err, packet, chan)
 {
+  if(chan.relay) return relay(chan, chan.relay, packet)
+
   if(!isHEX(packet.js.peer, 64)) return;
   var self = packet.from.self;
-
+  
   var peer = self.whois(packet.js.peer);
-  if(!peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
-  // send a single lossy packet
-  var js = {type:"connect", end:true, c:local.randomHEX(16), from:packet.from.parts};
+  if(!peer || !peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
+  var js = {from:packet.from.parts};
 
   // sanity on incoming paths array
   if(!Array.isArray(packet.js.paths)) packet.js.paths = [];
   
-  // insert in incoming IP path, TODO refactor how we overload paths, poor form
-  if(packet.sender.type.indexOf("ip") == 0)
-  {
-    var path = JSON.parse(JSON.stringify(packet.sender)); // clone
-    delete path.priority;
-    delete path.lastIn;
-    delete path.lastOut;
-    packet.js.paths.push(path);    
-  }
+  // insert in incoming IP path
+  if(packet.sender.type.indexOf("ip") == 0) packet.js.paths.push(packet.sender.json);
   
   // load/cleanse all paths
   js.paths = [];
-  var hasRelay;
   packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return;
-    if(path.type == "relay" && packet.sender.type == "relay") return; // don't signal double-relay
+    if(pathMatch(js.paths,path)) return; // duplicate
     if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal) return; // don't pass along local paths to public
-    if(path.type == "relay") hasRelay = true;
     js.paths.push(path);
   });
 
-  // look for a "viable" IP path between the two
-  var viable = false;
-  js.paths.forEach(function(path1){
-    peer.paths.forEach(function(path2){
-      if(path1.type != path2.type) return;
-      if(path1.type.indexOf("ip") != 0) return; // only IP paths
-      if(isLocalIP(path1.ip) != isLocalIP(path2.ip)) return; // must both be local or public
-      viable = [path1,path2];
-    });
+  // must bundle the senders key so the recipient can open them
+  chan.relay = peer.raw("connect",{js:js, body:packet.body},function(err, packet, chan2){
+    mirror(chan2,chan,packet);
   });
-  debug("peer viable path results",JSON.stringify(viable));
-
-  // when no viable path, always offer to bridge/relay
-  if(!viable)
-  {
-    peer.bridging = true;
-    js.paths.push({type:"bridge",id:packet.from.hashname,local:true});
-    // add relay if none yet, and isn't via one already
-    if(!hasRelay && packet.sender.type != "relay") js.paths.push({type:"relay", id:local.randomHEX(16)});
-  }
-  
-  // must bundle the senders der so the recipient can open them
-  peer.send({js:js, body:packet.body});
-}
-
-// packets coming in to me
-function inRelayMe(err, packet, chan)
-{
-  if(err) return; // TODO clean up anything?
-  if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
-  var self = packet.from.self;
-  // create a network path that maps back to this channel
-  var path = {type:"relay",id:chan.id,via:packet.from.hashname};
-  self.receive(packet.body, path);
-}
-
-// proxy packets for two hosts
-function inRelay(err, packet, chan)
-{
-  if(err) return;
-  var self = packet.from.self;
-
-  // new relay channel, validate destination
-  if(!isHEX(packet.js.to, 64)) return warn("invalid relay of", packet.js.to, "from", packet.from.hashname);
-
-  // if it's to us, handle that directly
-  if(packet.js.to == self.hashname) return inRelayMe(err, packet, chan);
-
-  // don't relay when it's coming from a relay
-  if(packet.sender.type == "relay") return debug("ignoring relay request from a relay",packet.js.to,JSON.stringify(packet.sender));
-
-  // if to someone else
-  var to = self.whois(packet.js.to);
-  if(to === packet.from) return warn("can't relay to yourself",packet.from.hashname);
-  if(!to || !to.alive) return warn("relay to dead hashname", packet.js.to, packet.from.hashname);
-
-  // throttle
-  if(!packet.from.relayed || Date.now() - packet.from.relayed > 1000)
-  {
-    packet.from.relayed = Date.now();
-    packet.from.relays = 0;
-  }
-  packet.from.relays++;
-  if(packet.from.relays > 5) return debug("relay too fast, dropping",packet.from.relays);
-
-  // dumb relay
-  debug("relay middleman",packet.from.hashname,to.hashname);
-  packet.from.relayed = Date.now();
-  to.send(packet);
 }
 
 // return a see to anyone closer
@@ -1763,8 +1696,6 @@ function pathMatch(path1, paths)
     case "http":
       if(path1.http == path2.http) match = path2;
       break;
-    case "bridge":
-    case "relay":
     case "webrtc":
       if(path1.id == path2.id) match = path2;
       break;
