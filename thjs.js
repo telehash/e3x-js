@@ -16,9 +16,9 @@ defaults.chan_autoack = 1000; // is how often we auto ack if the app isn't gener
 defaults.chan_resend = 2000; // resend the last packet after this long if it wasn't acked in a durable channel
 defaults.chan_outbuf = 100; // max size of outgoing buffer before applying backpressure
 defaults.chan_inbuf = 50; // how many incoming packets to cache during processing/misses
-defaults.nat_timeout = 120*1000; // nat timeout for inactivity
-defaults.idle_timeout = 5*60*1000; // overall inactivity timeout
-defaults.link_timer = 55*1000; // how often the DHT link maintenance runs
+defaults.nat_timeout = 60*1000; // nat timeout for inactivity
+defaults.idle_timeout = 5*defaults.nat_timeout; // overall inactivity timeout
+defaults.link_timer = defaults.nat_timeout - (5*1000); // how often the DHT link maintenance runs
 defaults.link_max = 256; // maximum number of links to maintain overall (minimum one packet per link timer)
 defaults.link_k = 8; // maximum number of links to maintain per bucket
 
@@ -55,18 +55,15 @@ exports.hashname = function(keys, send)
   self.pcounter = 1;
   self.receive = receive;
   // outgoing packets to the network
-  self.deliver = function(type, callback)
-  {
-    self.networks[type] = callback;
-  }
-  self.deliver("relay",fuction(path,msg){
+  self.deliver = function(type, callback){ self.networks[type] = callback};
+  self.networks["relay"] = function(path,msg){
     if(path.relay.ended) return debug("dropping dead relay");
     path.relay.send({body:msg});
-  });
+  };
 	self.send = function(path, msg, to){
     if(!msg) return warn("send called w/ no packet, dropping");
     if(!path) return warn("send called w/ no network, dropping");
-    path.lastOut = Date.now();
+    if(to) to.pathOut(path);
     debug("out",(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
     if(self.networks[path.type]) return self.networks[path.type](path,msg,to);
     // no network support, try a bridge
@@ -322,7 +319,8 @@ function linkMaint(self)
 function bridge(path, msg, to)
 {
   var self = this;
-  if(msg.head.length) return; // only bridge line packets
+  var packet = local.pdecode(msg);
+  if(packet.head.length) return; // only bridge line packets
   if(!to) return; // require to for line info
 
   
@@ -369,8 +367,7 @@ function addSeed(arg) {
   var seed = self.whokey(arg.parts,false,arg.keys);
   if(!seed) return warn("invalid seed info",arg);
   if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
-    if(pathMatch(path, seed.unpaths)) return;
-    seed.unpaths.push(path);
+    seed.pathGet(path);
   });
   if(arg.bridge) seed.bridging = true;
   seed.isSeed = true;
@@ -559,7 +556,7 @@ function whois(hashname)
 	if(hn) return hn;
   
   // make a new one
-  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], unpaths:[], possible:{}, isAlive:0};
+  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], isAlive:0};
   hn.at = Date.now();
   hn.bucket = dhash(self.hashname, hashname);
   if(!self.buckets[hn.bucket]) self.buckets[hn.bucket] = [];
@@ -570,91 +567,68 @@ function whois(hashname)
   hn.start = channel;
   hn.raw = raw;
 
-  // manage network information consistently, called on all validated incoming packets
-  hn.pathIn = function(path)
+  hn.pathGet = function(path)
   {
-    if(["ipv4","ipv6","http","bridge","relay","webrtc"].indexOf(path.type) == -1)
+    if(["ipv4","ipv6","http","relay","webrtc"].indexOf(path.type) == -1)
     {
       warn("unknown path type", JSON.stringify(path));
       return path;
     }
     
-    // relays are special cases, used temporarily and don't get added to .paths
-    if(path.type == "relay")
-    {
-      if(hn.to && hn.to.relay == path.relay) return hn.to; // already exists
-      debug("relay incoming",hn.hashname,JSON.stringify(path));
-      info(hn.hashname,path.type,JSON.stringify(path.json));
-      hn.to = path; // set new default relay
-      hn.alive = false; // a new relay is a red flag
-      // trigger sync whenever a relay is added (slightly delayed so other internal async stuff can happen first)
-      var started = Date.now();
-      setTimeout(function(){
-        debug("relay only, trying sync",hn.hashname);
-        hn.sync(function(){
-          // if we found another path, yay
-          if(hn.alive) return debug("relay upgraded, now alive",hn.hashname);
-          // only relay yet, try to create a bridge
-          self.bridge(hn, function(pathin, via){
-            debug("BRIDGING",hn.hashname,pathin,via&&via.hashname);
-            if(!pathin) return debug("no bridge");
-            hn.bridge = via.hashname;
-            // experimentally send direct via the bridge path now
-            hn.raw("path",{js:{priority:0},to:pathin}, inPath);
-          });
-        })
-      },10);
-      return path;
-    }
+    var match = pathMatch(path, hn.paths);
+    if(match) return match;
 
     // preserve original
     if(!path.json) path.json = JSON.parse(JSON.stringify(path));
-    
-    // anything else incoming means hn is alive
-    if(!hn.alive) debug("aliving",hn.hashname,JSON.stringify(path));
-    hn.alive = true;
-    self.recvAt = Date.now();
 
-    var match = pathMatch(path, hn.paths);
-    if(!match)
+    debug("adding new path",hn.paths.length,JSON.stringify(path.json));
+    info(hn.hashname,path.type,JSON.stringify(path.json));
+    hn.paths.push(path);
+
+    // always default to minimum priority
+    if(typeof path.priority != "number") path.priority = (path.type=="relay")?-1:0;
+
+    // track overall if they have a public IP network
+    if(path.type.indexOf("ip") == 0 && !isLocalIP(path.ip)) hn.isPublic = true;
+
+    return path;
+  }
+
+  hn.pathOut = function(path)
+  {
+    path = hn.pathGet(path);
+    path.lastOut = Date.now();
+    if(!pathValid(hn.to) && pathValid(path)) hn.to = path;
+  }
+
+  // manage network information consistently, called on all validated incoming packets
+  hn.pathIn = function(path)
+  {
+    path = hn.pathGet(path);
+
+    // first time we've seen em
+    if(!path.lastIn)
     {
-      // store a new path
-      debug("adding new path",JSON.stringify(path),JSON.stringify(hn.paths));
-      info(hn.hashname,path.type,JSON.stringify(path.json));
-      hn.paths.push(path);
-      match = path;
-      hn.to = match; // always set most recently created to best!
+      // for every new incoming path, trigger a sync (delayed so caller can continue/respond first)
+      setTimeout(hn.sync,1);
 
-      // if bridging, and this path is from the bridge, flag it for lower priority
-      if(hn.bridge && pathMatch(path, self.whois(hn.bridge).paths)) path.priority = -1;
-
-      // always default to minimum 0 here
-      if(typeof path.priority != "number") path.priority = 0;
-
-      // when multiple networks detected, trigger a sync (delayed so caller can continue/respond first)
-      if(hn.paths.length > 1) setTimeout(hn.sync,1);
-
-      // update public ipv4 address
+      // update public ipv4 info
       if(path.type == "ipv4" && !isLocalIP(path.ip))
       {
         hn.ip = path.ip;
         hn.port = path.port;
       }
-      
+
       // track overall if we trust them as local
-      if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip)) hn.isLocal = true;
-
-      // track overall if they are connected via a public IP network
-      if(path.type.indexOf("ip") == 0 && !isLocalIP(path.ip)) hn.isPublic = true;
+      if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip)) hn.isLocal = true;      
     }
-    
-    // track last active timestamp
-    match.lastIn = Date.now();
-    
-    // if better, use it
-    if(!pathValid(hn.to) || hn.to.type == "relay") hn.to = match;
 
-    return match;
+    path.lastIn = Date.now();
+    self.recvAt = Date.now();
+    if(!pathValid(hn.to)) hn.to = path;
+    hn.alive = (hn.to.type != "relay")?true:false;
+
+    return path;
   }
   
   // try to send a packet to a hashname, doing whatever is possible/necessary
@@ -683,11 +657,6 @@ function whois(hashname)
 
     // always send to all known paths, increase resiliency
     hn.paths.forEach(function(path){
-      self.send(path, hn.open(), hn);
-    });
-
-    // also send to any un-verified paths
-    hn.unpaths.forEach(function(path){
       self.send(path, hn.open(), hn);
     });
 
@@ -833,7 +802,7 @@ function whois(hashname)
       if(err) return;
       if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
       // create a network path that maps back to this channel
-      var path = {type:"relay",relay:chan};
+      var path = {type:"relay",relay:chan,json:{type:"relay",relay:packet.from.hashname}};
       if(packet.js.bridge) path = packet.sender; // sender is offering to bridge, use them!
       self.receive(packet.body, path);
     });
@@ -1353,7 +1322,7 @@ function inConnect(err, packet, chan)
   if(chan.relay)
   {
     // create a virtual network path that maps back to this channel
-    var path = {type:"relay",relay:chan};
+    var path = {type:"relay",relay:chan,json:{type:"relay",relay:packet.from.hashname}};
     if(packet.js.bridge) path = packet.sender; // sender is offering to bridge, use them!
     self.receive(packet.body, path);
     return;
@@ -1365,8 +1334,6 @@ function inConnect(err, packet, chan)
   // try the suggested paths
   if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return debug("bad path",JSON.stringify(path));
-    // store any path as a possible one
-    to.possible[path.type] = path;
     self.send(path,to.open(),to);
   });
   
@@ -1392,10 +1359,11 @@ function relay(self, from, to, packet)
   var js;
   if(self.bridging)
   {
-    if(packet.head.length == 0 && !to.bridged)
+    var bp = local.pdecode(packet.body);
+    if(bp.head.length == 0 && !to.bridged)
     {
       to.bridged = true;
-      self.bridgeLine[local.lineid(packet.body)] = to.last;
+      self.bridgeLine[local.lineid(bp.body)] = to.last;
     }
     // have to seen both directions to bridge
     if(from.bridged && to.bridged) js = {"bridge":true};
@@ -1480,7 +1448,7 @@ function inLink(err, packet, chan)
 {
   if(err) return;
   var self = packet.from.self;
-  chan.timeout(defaults.nat_timeout);
+  chan.timeout(defaults.nat_timeout*2); // two NAT windows to be safe
 
   // send a response if this is a new incoming
   if(!chan.sentAt)
@@ -1557,8 +1525,6 @@ function inPath(err, packet, chan)
     if(pathMatch(path, packet.from.paths)) return;
     // a new one, experimentally send it a path
     packet.from.raw("path",{js:{priority:1},to:path}, inPath);
-    // stash any path for possible bridge
-    packet.from.possible[path.type] = path;
   });
   
   // if path info from a seed, update our public ip/port
@@ -1730,8 +1696,10 @@ function pathMatch(path1, paths)
 // validate if a network path is acceptable to stop at
 function pathValid(path)
 {
-  if(!path || !path.lastIn) return false;
-  if(Date.now() - path.lastIn < 60*1000) return true; // received anything in the last minute is good
+  if(!path) return false;
+  if(path.type == "relay" && !path.relay.ended) return true; // active relays are always valid
+  if(!path.lastIn) return false; // all else must receive to be valid
+  if(Date.now() - path.lastIn < defaults.nat_timeout) return true; // received anything recently is good
   return false;
 }
 
