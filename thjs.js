@@ -63,7 +63,7 @@ exports.hashname = function(keys)
     if(!msg) return warn("send called w/ no packet, dropping");
     if(!path) return warn("send called w/ no network, dropping");
     if(to) to.pathOut(path);
-    debug("out",(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
+    debug("<<<<",Date(),(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
     if(self.networks[path.type]) return self.networks[path.type](path,msg,to);
     // no network support, try a bridge
     self.bridge(path,msg,to);
@@ -322,7 +322,6 @@ function bridge(path, msg, to)
   if(packet.head.length) return; // only bridge line packets
   if(!to) return; // require to for line info
 
-  
   // check for existing bridge
   var existing = pathMatch(path,to.bridges);
   if(existing)
@@ -422,7 +421,7 @@ function receive(msg, path)
   packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug("in",(typeof msg.length == "function")?msg.length():msg.length, packet.head_length, packet.body_length,[path.type,path.ip,path.port,path.id].join(","));
+  debug(">>>>",Date(),(typeof msg.length == "function")?msg.length():msg.length, packet.head_length, packet.body_length,[path.type,path.ip,path.port,path.id].join(","));
 
   // handle any LAN notifications
   if(packet.js.type == "lan") return inLan(self, packet);
@@ -606,8 +605,9 @@ function whois(hashname)
     path = hn.pathGet(path);
 
     // first time we've seen em
-    if(!path.lastIn)
+    if(!path.lastIn && !path.lastOut)
     {
+      debug("PATH INNEW",JSON.stringify(path.json),hn.paths.map(function(p){return JSON.stringify(p.json)}));
       // for every new incoming path, trigger a sync (delayed so caller can continue/respond first)
       setTimeout(hn.sync,1);
 
@@ -816,57 +816,40 @@ function whois(hashname)
     return hn.opened;
   }
   
-  // send a full network path sync, callback(true||false) if err (no networks)
-  hn.sync = function(callback)
+  // send a full network path sync
+  hn.sync = function()
   {
-    if(!callback) callback = function(){};
-    debug("syncing",hn.hashname,JSON.stringify(hn.paths));
+    debug("SYNCING",hn.hashname,hn.paths.map(function(p){return JSON.stringify(p.json)}));
     
-    // check which types of paths we have to them
-    var types = {};
-    hn.paths.forEach(function(path){
-      types[path.type] = true;
-    });
-
-    // clone the paths and add in relay if one
-    var paths = hn.paths.slice();
-    if(hn.to && hn.to.type == "relay") paths.push(hn.to);
-
-    // empty. TODO should we do something?
-    if(paths.length == 0) return callback();
-
     // compose all of our known paths we can send to them
-    var alts = [];
+    var paths = [];
     // if no ip paths and we have some, signal them
-    if(!types.ipv4 && self.paths.pub4) alts.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
-    if(!types.ipv6 && self.paths.pub6) alts.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
+    if(self.paths.pub4) paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
+    if(self.paths.pub6) paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
     // if we support http path too
-    if(!types.http && self.paths.http) alts.push({type:"http",http:self.paths.http.http});
+    if(self.paths.http) paths.push({type:"http",http:self.paths.http.http});
     // if we support webrtc
-    if(!types.webrtc && self.paths.webrtc) alts.push({type:"webrtc", id:local.randomHEX(16)});
+    if(self.paths.webrtc) paths.push({type:"webrtc"});
     // include local ip/port if we're relaying to them
     if(hn.relayAsk == "local")
     {
-      if(self.paths.lan4) alts.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
-      if(self.paths.lan6) alts.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});        
+      if(self.paths.lan4) paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
+      if(self.paths.lan6) paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});        
     }
 
     // check all paths at once
-    var refcnt = paths.length;
-    paths.forEach(function(path){
-      debug("PATHLOOP",paths.length,JSON.stringify(path));
+    hn.paths.forEach(function(path){
+      debug("PATHLOOP",hn.paths.length,JSON.stringify(path.json));
       var js = {};
       js.path = path.json;
       // our outgoing priority of this path
       js.priority = (path.type == "relay") ? 0 : 1;
-      if(alts.length > 0) js.paths = alts;
+      if(paths.length > 0) js.paths = paths;
       var lastIn = path.lastIn;
       hn.raw("path",{js:js, timeout:3000, to:path}, function(err, packet){
         // when it actually errored and hasn't been active, invalidate it
         if(err && err !== true && path.lastIn == lastIn) path.lastIn = 0;
         else inPath(true, packet); // handles any response .priority and .paths
-        // processed all paths, done
-        if((--refcnt) == 0) callback();
       });
     });
   }
@@ -1327,7 +1310,7 @@ function inConnect(err, packet, chan)
     return;
   }
 
-  chan.relay = self.whokey(packet.js.from,packet.body);
+  var to = chan.relay = self.whokey(packet.js.from,packet.body);
   if(!chan.relay) return warn("invalid connect request from",packet.from.hashname,packet.js);    
 
   // try the suggested paths
@@ -1463,7 +1446,7 @@ function inLink(err, packet, chan)
       });
     });
 
-    if(self.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (type=="local")?false:true});
+    if(self.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
     
     // TODO, check link_max and end it or evict another
     chan.send({js:js});
@@ -1514,7 +1497,6 @@ function inMaintenance(err, packet, chan)
 // update/respond to network state
 function inPath(err, packet, chan)
 {
-  debug("INPATH",JSON.stringify(packet.js));
   var self = packet.from.self;
 
   // check/try any alternate paths
@@ -1677,6 +1659,8 @@ function pathMatch(path1, paths)
   paths.forEach(function(path2){
     switch(path1.type)
     {
+    case "relay":
+      if(path1.relay == path2.relay) match = path2;
     case "ipv4":
     case "ipv6":
       if(path1.ip == path2.ip && path1.port == path2.port) match = path2;

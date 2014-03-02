@@ -3,7 +3,7 @@ var seeds = {
     "paths": [
       {
         "type": "ipv4",
-        "ip": "10.0.0.5",
+        "ip": "127.0.0.1",
         "port": 42424
       },
       {
@@ -13,7 +13,7 @@ var seeds = {
       },
       {
         "type": "http",
-        "http": "http://10.0.0.5:42424"
+        "http": "http://127.0.0.1:42424"
       }
     ],
     "parts": {

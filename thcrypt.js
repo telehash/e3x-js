@@ -572,7 +572,7 @@ function pencode(js, body)
 // packet decoding
 function pdecode(packet)
 {
-  if(typeof packet == "string") packet = forge.util.createBuffer(packet);
+  packet = (typeof packet == "string") ? forge.util.createBuffer(packet) : packet.copy();
   var len = packet.getInt16(packet);
   if(packet.length() < len) return false;
   var head = packet.getBytes(len);
