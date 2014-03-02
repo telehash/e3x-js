@@ -32,7 +32,7 @@ exports.isHashname = function(hex)
 }
 
 // start a hashname listening and ready to go
-exports.hashname = function(keys, send)
+exports.hashname = function(keys)
 {
   if(!local) return warn("thjs.localize() needs to be called first");
   if(!keys) return warn("bad args to hashname, requires keys");
@@ -45,7 +45,6 @@ exports.hashname = function(keys, send)
     if(err) return warn("failed to load keys",err);
     self.hashname = local.parts2hn(self.parts);
   }
-  if(typeof send !== "function") return warn("second arg needs to be a function to send packets, is", typeof send);
 
   // configure defaults
   self.nat = false;
@@ -569,7 +568,7 @@ function whois(hashname)
 
   hn.pathGet = function(path)
   {
-    if(["ipv4","ipv6","http","relay","webrtc"].indexOf(path.type) == -1)
+    if(["ipv4","ipv6","http","relay","webrtc","local"].indexOf(path.type) == -1)
     {
       warn("unknown path type", JSON.stringify(path));
       return path;
@@ -1464,7 +1463,7 @@ function inLink(err, packet, chan)
       });
     });
 
-    if(self.bridging) js.bridges = Object.keys(self.networks);
+    if(self.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (type=="local")?false:true});
     
     // TODO, check link_max and end it or evict another
     chan.send({js:js});
@@ -1685,6 +1684,7 @@ function pathMatch(path1, paths)
     case "http":
       if(path1.http == path2.http) match = path2;
       break;
+    case "local":
     case "webrtc":
       if(path1.id == path2.id) match = path2;
       break;
