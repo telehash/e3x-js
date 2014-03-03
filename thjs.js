@@ -64,8 +64,14 @@ exports.hashname = function(keys)
     if(!path) return warn("send called w/ no network, dropping");
     if(to) to.pathOut(path);
     debug("<<<<",Date(),(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
-    if(self.networks[path.type]) return self.networks[path.type](path,msg,to);
-    // no network support, try a bridge
+    
+    // try to send it via a supported network
+    if(self.networks[path.type]) self.networks[path.type](path,msg,to);
+
+    // if the path has been active in or out recently, we're done
+    if(Date.now() - path.lastIn < defaults.nat_timeout || Date.now() - path.lastOut < (defaults.chan_timeout / 2)) return;
+
+    // no network support or unresponsive path, try a bridge
     self.bridge(path,msg,to);
 	};
   self.pathSet = function(path)
@@ -588,7 +594,7 @@ function whois(hashname)
     if(typeof path.priority != "number") path.priority = (path.type=="relay")?-1:0;
 
     // track overall if they have a public IP network
-    if(path.type.indexOf("ip") == 0 && !isLocalIP(path.ip)) hn.isPublic = true;
+    if(!isLocalPath(path)) hn.isPublic = true;
 
     return path;
   }
@@ -620,7 +626,7 @@ function whois(hashname)
       }
 
       // track overall if we trust them as local
-      if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip)) hn.isLocal = true;      
+      if(isLocalPath(path)) hn.isLocal = true;      
     }
 
     path.lastIn = Date.now();
@@ -1380,12 +1386,13 @@ function inPeer(err, packet, chan)
   packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return;
     if(pathMatch(js.paths,path)) return; // duplicate
-    if(path.type.indexOf("ip") == 0 && isLocalIP(path.ip) && !peer.isLocal) return; // don't pass along local paths to public
+    if(isLocalPath(path) && !peer.isLocal) return; // don't pass along local paths to public
     js.paths.push(path);
   });
 
   // must bundle the senders key so the recipient can open them
   chan.relay = peer.raw("connect",{js:js, body:packet.body},function(err, packet, chan2){
+    if(err) return;
     relay(self, chan2, chan, packet);
   });
 }
@@ -1688,6 +1695,15 @@ function partsMatch(parts1, parts2)
   var ids = Object.keys(parts1).sort();
   var csid;
   while(csid = ids.pop()) if(parts2[csid]) return csid;
+  return false;
+}
+
+function isLocalPath(path)
+{
+  if(!path || !path.type) return false;
+  if(path.type == "bluetooth") return true;
+  if(["ipv4","ipv6"].indexOf(path.type) >= 0) return isLocalIP(path.ip);
+  // http?
   return false;
 }
 
