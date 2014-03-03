@@ -337,6 +337,7 @@ function bridge(path, msg, to)
   // TODO, better selection of a bridge?
   var via;
   Object.keys(self.bridges[path.type]).forEach(function(id){
+    if(id == to.hashname) return; // lolz
     var hn = self.whois(id);
     if(hn.alive) via = hn;
   });
@@ -716,11 +717,6 @@ function whois(hashname)
     var chan = hn.chans[packet.js.c];
     if(chan) return chan.receive(packet);
 
-    // verify incoming new chan id
-    if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
-    if(packet.js.c < (hn.chanIn-2)) return warn("old channel id",packet.js.c,hn.chanIn);
-    hn.chanIn = packet.js.c;
-
     // start a channel if one doesn't exist, check either reliable or unreliable types
     var listening = {};
     if(typeof packet.js.seq == "undefined") listening = self.raws;
@@ -736,6 +732,12 @@ function whois(hashname)
       }
       return;
     }
+    
+    // verify incoming new chan id
+    if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
+    if(packet.js.c < (hn.chanIn-2)) return warn("old channel id",packet.js.c,hn.chanIn);
+    hn.chanIn = packet.js.c;
+    
     // make the correct kind of channel;
     var kind = (listening == self.raws) ? "raw" : "start";
     var chan = hn[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
@@ -756,7 +758,7 @@ function whois(hashname)
   {
     var bucket = dhash(hn.hashname, hashname);
     var prefix = hashname.substr(0, Math.ceil((255-bucket)/4)+2);
-    hn.raw("seek", {retry:3, js:{"seek":prefix}}, function(err, packet, chan){
+    hn.raw("seek", {timeout:defaults.seek_timeout, retry:3, js:{"seek":prefix}}, function(err, packet, chan){
       callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
     });
   }
@@ -1037,7 +1039,7 @@ function raw(type, arg, callback)
   {
     arg.js.type = type;
     chan.send(arg);
-    // retry if asked to
+    // retry if asked to, TODO use timeout for better time
     if(arg.retry)
     {
       var at = 1000;
@@ -1543,20 +1545,12 @@ function inBridge(err, packet, chan)
 
   // must be allowed either globally or per hashname
   if(!self.bridging && !packet.from.bridging) return chan.send({js:{err:"not allowed"}});
-  
-  // special bridge path for local ips must be "resolved" to a real path
-  if(packet.js.path.type == "bridge" && packet.js.path.local == true)
-  {
-    var local;
-    var to = self.whois(packet.js.path.id);
-    // just take the highest priority path
-    if(to) to.paths.forEach(function(path){
-      if(!local) local = path;
-      if(path.priority > local.priority) local = path;
-    });
-    if(!local) return chan.send({js:{err:"invalid path"}});
-    packet.js.path = local;
-  }
+
+  // don't bridge for types we don't know
+  if(!self.networks[packet.js.path.type]) return chan.send({js:{err:"bad path"}});  
+
+  // ignore fool line ids
+  if(self.lines[packet.js.to] || self.lines[packet.js.from]) return chan.send({js:{err:"bad line"}});
 
   // set up the actual bridge paths
   debug("BRIDGEUP",JSON.stringify(packet.js));
