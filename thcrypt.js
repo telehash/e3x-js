@@ -486,7 +486,7 @@ function ecKey(curve, bytes)
 	//console.log(curve);
 	var n = c.getN();
 	var n1 = n.subtract(BigInteger.ONE);
-	var r = new BigInteger(n.bitLength(), new SecureRandom());
+	var r = new BigInteger(forge.random.getBytesSync(n.bitLength()));
 	var priecc = r.mod(n1).add(BigInteger.ONE);
 	priecc.uncompressed = forge.util.hexToBytes(unstupid(priecc.toString(16),bytes*2));
 	//console.log(priecc);

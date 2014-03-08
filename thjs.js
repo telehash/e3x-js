@@ -1,4 +1,4 @@
-(function(exports){ // browser||node safe wrapper
+var crypto = require("crypto");
 
 var warn = function(){console.log.apply(console,arguments); return undefined; };
 var debug = function(){};
@@ -7,7 +7,6 @@ exports.debug = function(cb){ debug = cb; };
 var info = function(){};
 //var debug = function(){console.log.apply(console,arguments)};
 exports.info = function(cb){ info = cb; };
-
 
 var defaults = exports.defaults = {};
 defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
@@ -22,29 +21,27 @@ defaults.link_timer = defaults.nat_timeout - (5*1000); // how often the DHT link
 defaults.link_max = 256; // maximum number of links to maintain overall (minimum one packet per link timer)
 defaults.link_k = 8; // maximum number of links to maintain per bucket
 
-// dependency functions
-var local;
-exports.localize = function(locals){ local = locals; }
-
 exports.isHashname = function(hex)
 {
   return isHEX(hex, 64);
 }
 
-// start a hashname listening and ready to go
-exports.hashname = function(keys)
-{
-  if(!local) return warn("thjs.localize() needs to be called first");
-  if(!keys) return warn("bad args to hashname, requires keys");
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, TSockets:{}, networks:{}};
+exports.isLocalIP = isLocalIP;
 
-  if(keys.parts)
+exports.switch = function()
+{
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, TSockets:{}, networks:{}, CSets:{}};
+
+  self.load = function(keys)
   {
+    if(!keys || !keys.parts) return "bad keys";
     self.parts = keys.parts;
-    var err = local.loadkeys(self,keys);
-    if(err) return warn("failed to load keys",err);
-    self.hashname = local.parts2hn(self.parts);
+    var err = loadkeys(self,keys);
+    if(err) return err;
+    if(Object.keys(self.cs).length == 0) return "missing cipher sets";
+    self.hashname = parts2hn(self.parts);
   }
+  self.create = keysgen;
 
   // configure defaults
   self.nat = false;
@@ -324,7 +321,7 @@ function linkMaint(self)
 function bridge(path, msg, to)
 {
   var self = this;
-  var packet = local.pdecode(msg);
+  var packet = pdecode(msg);
   if(packet.head.length) return; // only bridge line packets
   if(!to) return; // require to for line info
 
@@ -384,8 +381,8 @@ function online(callback)
 	var self = this;
   self.isOnline = true;
   // ping lan
-  self.lanToken = local.randomHEX(16);
-  self.send({type:"lan"}, local.pencode({type:"lan",lan:self.lanToken,from:self.parts}));
+  self.lanToken = randomHEX(16);
+  self.send({type:"lan"}, pencode({type:"lan",lan:self.lanToken,from:self.parts}));
 
   var dones = self.seeds.length;
   if(!dones) {
@@ -421,7 +418,7 @@ function online(callback)
 function receive(msg, path)
 {
 	var self = this;
-  var packet = local.pdecode(msg);
+  var packet = pdecode(msg);
   if(!packet) return warn("failed to decode a packet from", path, msg.toString());
   if(packet.length == 2) return; // empty packets are NAT pings
   
@@ -437,7 +434,7 @@ function receive(msg, path)
   // either it's an open
   if(packet.head.length == 1)
 	{
-    var open = local.deopenize(self, packet);
+    var open = deopenize(self, packet);
     if (!open || !open.verify) return warn("couldn't decode open",open);
     if (!isHEX(open.js.line, 32)) return warn("invalid line id enclosed",open.js.line);
     if(open.js.to !== self.hashname) return warn("open for wrong hashname",open.js.to);
@@ -480,7 +477,8 @@ function receive(msg, path)
     self.send(path,from.open(),from);
 
     // line is open now!
-    local.openline(from, open);
+    from.csid = open.csid;
+    self.CSets[open.csid].openline(from, open);
     debug("line open",from.hashname,from.lineOut,from.lineIn);
     self.lines[from.lineOut] = from;
     
@@ -500,14 +498,14 @@ function receive(msg, path)
   // or it's a line
   if(packet.head.length == 0)
 	{
-    var lineID = local.lineid(packet.body);
+    var lineID = packet.body.slice(0,16).toString("hex");
 	  var line = packet.from = self.lines[lineID];
 
 	  // a matching line is required to decode the packet
 	  if(!line) {
 	    if(!self.bridgeLine[lineID]) return debug("unknown line received", lineID, JSON.stringify(packet.sender));
       debug("BRIDGE",JSON.stringify(self.bridgeLine[lineID]),lineID);
-      var id = local.hashHEX(packet.body);
+      var id = crypto.createHash("sha256").update(packet.body).digest("hex")
       if(self.bridgeCache[id]) return; // drop duplicates
       self.bridgeCache[id] = true;
       // flat out raw retransmit any bridge packets
@@ -516,7 +514,7 @@ function receive(msg, path)
 
 		// decrypt and process
     var err;
-	  if((err = local.delineize(packet.from, packet))) return debug("couldn't decrypt line",err,packet.sender);
+	  if((err = self.CSets[from.csid].delineize(packet.from, packet))) return debug("couldn't decrypt line",err,packet.sender);
     line.lineAt = line.openAt;
     line.receive(packet);
     return;
@@ -531,11 +529,11 @@ function whokey(parts, key, keys)
   if(typeof parts != "object") return false;
   var csid = partsMatch(self.parts,parts);
   if(!csid) return false;
-  hn = self.whois(local.parts2hn(parts));
+  hn = self.whois(parts2hn(parts));
   if(!hn) return false;
   hn.parts = parts;
   if(keys) key = keys[csid]; // convenience for addSeed
-  var err = local.loadkey(hn,csid,key);
+  var err = loadkey(self,hn,csid,key);
   if(err)
   {
     warn("whokey err",hn.hashname,err);
@@ -643,7 +641,7 @@ function whois(hashname)
     if(hn.lineIn)
     {
       debug("line sending",hn.hashname,hn.lineIn);
-      var lined = packet.msg || local.lineize(hn, packet);
+      var lined = packet.msg || self.CSets[to.csid].lineize(hn, packet);
       hn.sentAt = Date.now();
 
       // directed packets are preferred, just dump and done
@@ -681,7 +679,7 @@ function whois(hashname)
         {
           // NAT hole punching
           var path = {type:"ipv4",ip:address[2],port:parseInt(address[3])};
-          self.send(path,local.pencode());
+          self.send(path,pencode());
           // if possibly behind the same NAT, set flag to allow/ask to relay a local path
           if(self.nat && address[2] == (self.paths.pub4 && self.paths.pub4.ip)) hn.relayAsk = "local";
         }else{ // no ip address, must relay
@@ -805,7 +803,7 @@ function whois(hashname)
       if(self.paths.lan4) js.paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
       if(self.paths.lan6) js.paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});      
     }
-    hn.raw("peer",{js:js, body:local.getkey(self,csid)}, function(err, packet, chan){
+    hn.raw("peer",{js:js, body:getkey(self,csid)}, function(err, packet, chan){
       if(err) return;
       if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
       // create a network path that maps back to this channel
@@ -820,7 +818,7 @@ function whois(hashname)
   {
     if(!hn.public) return false; // can't open if no key
     if(hn.opened) return hn.opened;
-    hn.opened = local.openize(self,hn);
+    hn.opened = openize(self,hn);
     return hn.opened;
   }
   
@@ -1349,11 +1347,11 @@ function relay(self, from, to, packet)
   var js;
   if(self.bridging)
   {
-    var bp = local.pdecode(packet.body);
+    var bp = pdecode(packet.body);
     if(bp.head.length == 0 && !to.bridged)
     {
       to.bridged = true;
-      self.bridgeLine[local.lineid(bp.body)] = to.last;
+      self.bridgeLine[bp.body.slice(0,16).toString("hex")] = to.last;
     }
     // have to seen both directions to bridge
     if(from.bridged && to.bridged) js = {"bridge":true};
@@ -1595,7 +1593,7 @@ function inLan(self, packet)
   if(!csid) return;
   packet.js.type = "seed";
   packet.js.from = self.parts;
-  self.send({type:"lan"}, local.pencode(packet.js, local.getkey(self,csid)));
+  self.send({type:"lan"}, pencode(packet.js, getkey(self,csid)));
 }
 
 // answers from any LAN broadcast notice we sent
@@ -1728,7 +1726,129 @@ function isLocalIP(ip)
   if(parts[0] == "169" && parts[1] == "254") return true; // link local
   return false;
 }
-exports.isLocalIP = isLocalIP;
 
-// our browser||node safe wrapper
-})(typeof exports === 'undefined'? this['thjs']={}: exports);
+// return random bytes, in hex
+function randomHEX(len)
+{
+	return crypto.randomBytes(len).toString("hex");
+}
+
+function parts2hn(parts)
+{
+  var rollup = new Buffer(0);
+  Object.keys(parts).sort().forEach(function(id){
+    rollup = crypto.createHash("sha256").update(Buffer.concat([rollup,new Buffer(id)])).digest();
+    rollup = crypto.createHash("sha256").update(Buffer.concat([rollup,new Buffer(parts[id])])).digest();
+  });
+  return rollup.toString("hex");
+}
+
+// encode a packet
+function pencode(js, body)
+{
+  var head = (typeof js == "number") ? new Buffer(String.fromCharCode(js)) : new Buffer(js?JSON.stringify(js):"", "utf8");
+  if(typeof body == "string") body = new Buffer(body, "binary");
+  body = body || new Buffer(0);
+  var len = new Buffer(2);
+  len.writeInt16BE(head.length, 0);
+  return Buffer.concat([len, head, body]);
+}
+
+// packet decoding
+function pdecode(packet)
+{
+  if(!packet) return undefined;
+  var buf = (typeof packet == "string") ? new Buffer(packet, "binary") : packet;
+
+  // read and validate the json length
+  var len = buf.readUInt16BE(0);
+  if(len > (buf.length - 2)) return undefined;
+  var head = buf.slice(2, len+2);
+  var body = buf.slice(len + 2);
+
+  // parse out the json
+  var js = {};
+  if(len > 1)
+  {
+    try {
+      js = JSON.parse(head.toString("utf8"));
+    } catch(E) {
+      console.log("couldn't parse JS",head.toString("hex"),E,packet.sender);
+      return undefined;
+    }
+  }
+  return {js:js, length:buf.length, head:head.toString("binary"), body:body};
+}
+
+function getkey(id, csid)
+{
+  return id.cs && id.cs[csid] && id.cs[csid].key;
+}
+
+function loadkeys(self, keys)
+{
+  self.cs = {};
+  self.keys = {}; // for convenience
+  var err = false;
+  Object.keys(self.parts).forEach(function(csid){
+    self.keys[csid] = keys[csid];
+    self.cs[csid] = {};
+    if(!self.CSets[csid]) err = csid+" not supported";
+    err = err||self.CSets[csid].loadkey(self.cs[csid], keys[csid], keys[csid+"_secret"]);
+  });
+  return err;
+}
+
+function loadkey(self, id, csid, key)
+{
+  id.csid = csid;
+  return self.CSets[csid].loadkey(id, key);
+}
+
+function keysgen(cbDone,cbStep)
+{
+  var self = this;
+  var ret = {parts:{}};
+  var todo = Object.keys(self.CSets);
+  if(todo.length == 0) return cbDone("no sets supported");
+  function pop(err)
+  {
+    if(err) return cbDone(err);
+    var csid = todo.pop();
+    if(!csid){
+      self.load(ret);
+      return cbDone(null, ret);
+    }
+    self.CSets[csid].genkey(ret,pop,cbStep);
+  }
+  pop();
+}
+
+function openize(self, to)
+{
+  if(!to.csid)
+  {
+    console.log("can't open w/ no key");
+    return undefined;
+  }
+	if(!to.lineOut) to.lineOut = randomHEX(16);
+  if(!to.lineAt) to.lineAt = Date.now();
+	var inner = {}
+	inner.at = to.lineAt; // always the same for the generated line id/key
+	inner.to = to.hashname;
+  inner.from = self.parts;
+	inner.line = to.lineOut;
+  return self.CSets[to.csid].openize(self, to, inner);
+}
+
+function deopenize(self, open)
+{
+//  console.log("DEOPEN",open.body.length);
+  var ret;
+  var csid = open.head.charCodeAt().toString(16);
+  if(!CS[csid]) return {err:"unknown CSID of "+csid};
+  try{ret = self.CSets[csid].deopenize(self, open);}catch(E){return {err:E};}
+  ret.csid = csid;
+  return ret;
+}
+
