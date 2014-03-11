@@ -26,11 +26,9 @@ exports.isHashname = function(hex)
   return isHEX(hex, 64);
 }
 
-exports.isLocalIP = isLocalIP;
-
 exports.switch = function()
 {
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, TSockets:{}, networks:{}, CSets:{}};
+  var self = this = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, networks:{}, CSets:{}};
 
   self.load = function(keys)
   {
@@ -91,6 +89,12 @@ exports.switch = function()
 	// map a hashname to an object, whois(hashname)
 	self.whois = whois;
 	self.whokey = whokey;
+  self.start = function(hashname,type,arg,cb)
+  {
+    var hn = self.whois(hashname);
+    if(!hn) return cb("invalid hashname");
+    return hn.start(type,arg,cb);
+  }
   
   // connect to the network, online(callback(err))
   self.online = online;
@@ -106,26 +110,6 @@ exports.switch = function()
     if(typeof type != "string" || typeof callback != "function") return warn("invalid arguments to raw");
     self.raws[type] = callback;
   };
-
-  // TeleSocket handling
-  //   - to listen pass path-only uri "/foo/bar", fires callback(socket) on any incoming matching uri
-  //   - to connect, pass in full uri "ts://hashname/path" returns socket
-  self.socket = function(uri, callback)
-  {
-    if(typeof uri != "string") return warn("invalid TS uri")&&false;
-    // detect connecting socket
-    if(uri.indexOf("ts://") == 0)
-    {
-      var parts = uri.substr(5).split("/");
-      var to = self.whois(parts.shift());
-      if(!to) return warn("invalid TS hashname")&&false;
-      return to.socket(parts.join("/"));
-    }
-    if(uri.indexOf("/") != 0) return warn("invalid TS listening uri")&&false;
-    debug("adding TS listener",uri)
-    self.TSockets[uri] = callback;
-  }
-	self.rels["ts"] = inTS;
   
 	// internal listening unreliable channels
 	self.raws["peer"] = inPeer;
@@ -138,6 +122,10 @@ exports.switch = function()
   // primarily internal, to seek/connect to a hashname
   self.seek = seek;
   self.bridge = bridge;
+  
+  // for modules
+  self.isLocalIP = isLocalIP;
+  self.randomHEX = randomHEX;
   
   linkLoop(self);
   return self;
@@ -175,21 +163,6 @@ self.raw(type, callback)
 
 // these are called once a reliable channel is started both ways to add custom functions for the app
 exports.channelWraps = {
-	"stream":function(chan){
-    // send raw data over, must not be called again until cbMore(err) is called
-    chan.write = function(data, cbMore)
-    {
-      // break data into chunks
-      // if outgoing is full, chan.more = cbMore
-    }
-    chan.callback = function(packet, callback)
-    {
-      if(!chan.read) return chan.end("no handler");
-      // TODO if chan.more and outgoing isn't full, var more=chan.more;delete chan.more;more()
-      if(!packet.body && !packet.js.end) return callback(); // odd empty?
-      chan.read(packet.js.err||packet.js.end, packet.body, callback);
-    }
-	},
 	"bulk":function(chan){
     // handle any incoming bulk flow
     var bulkIn = "";
@@ -214,59 +187,7 @@ exports.channelWraps = {
       }
       chan.end();
     }
-	},
-  "TS":function(chan){
-    chan.socket = {data:"", hashname:chan.hashname, id:chan.id};
-    chan.callback = function(err, packet, chan, callback){
-      // go online
-      if(chan.socket.readyState == 0)
-      {
-        chan.socket.readyState = 1;
-        if(chan.socket.onopen) chan.socket.onopen();
-      }
-      if(packet.body) chan.socket.data += packet.body;
-      if(packet.js.done)
-      {
-        // allow ack-able onmessage handler instead
-        if(chan.socket.onmessageack) chan.socket.onmessageack(chan.socket, callback);
-        else callback();
-        if(chan.socket.onmessage) chan.socket.onmessage(chan.socket);
-        chan.socket.data = "";
-      }else{
-        callback();
-      }
-      if(err)
-      {
-        chan.socket.readyState = 2;
-        if(err != true && chan.socket.onerror) chan.socket.onerror(err);
-        if(chan.socket.onclose) chan.socket.onclose();
-      }
-    }
-    // set up TS object for external use
-    chan.socket.readyState = chan.lastIn ? 1 : 0; // if channel was already active, set state 1
-    chan.socket.send = function(data, callback){
-      if(chan.socket.readyState != 1) return debug("sending fail to TS readyState",chan.socket.readyState)&&false;
-      // chunk it
-      while(data)
-      {
-        var chunk = data.substr(0,1000);
-        data = data.substr(1000);
-        var packet = {js:{},body:chunk};
-        // last packet gets confirmed/flag
-        if(!data)
-        {
-          packet.callback = callback;
-          packet.js.done = true;
-        }
-        debug("TS SEND",chunk.length,packet.js.done);
-        chan.send(packet);
-      }
-    }
-    chan.socket.close = function(){
-      chan.socket.readyState = 2;
-      chan.done();
-    }    
-  }
+	}
 }
 
 // do the maintenance work for links
@@ -1563,22 +1484,6 @@ function inBridge(err, packet, chan)
   self.bridgeLine[packet.js.from] = packet.sender;
 
   chan.send({js:{end:true}});
-}
-
-// handle any bridge requests, if allowed
-function inTS(err, packet, chan, callback)
-{
-  if(err) return;
-  var self = packet.from.self;
-  callback();
-
-  // ensure valid request
-  if(typeof packet.js.path != "string" || !self.TSockets[packet.js.path]) return chan.err("unknown path");
-  
-  // create the socket and hand back to app
-  chan.wrap("TS");
-  self.TSockets[packet.js.path](chan.socket);
-  chan.send({js:{open:true}});
 }
 
 // type lan, looking for a local seed

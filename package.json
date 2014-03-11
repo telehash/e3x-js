@@ -1,8 +1,8 @@
 {
-	"name": "thjs",
-  "description": "An implementation of telehash in pure javascript that works in the browser.",
+	"name": "telehash-js",
+  "description": "An implementation of telehash in pure javascript",
   "homepage": "https://github.com/telehash/thjs",
-	"version": "0.0.49",
+	"version": "0.1.0",
   "keywords": [
     "telehash",
     "crypto",
@@ -14,14 +14,9 @@
     "browser"
   ],
   "main":"thjs.js",
-  "files":["thjs.js","LICENSE","README.md","thcrypt.js","seeds.json","includes/jsbn.js","includes/jsbn2.js","includes/ec.js","includes/sec.js","includes/prng4.js","includes/rng.js"],
   "repository": {
     "type": "git",
     "url": "https://github.com/telehash/thjs.git"
-  },
-  "scripts": {
-    "seeds":"echo 'var seeds = \\c' > seeds.js && cat seeds.json >> seeds.js",
-    "chrome":"mkdir -p chrome/includes && cp includes/* chrome/includes/ && cp *.js chrome/ && cp seeds.json chrome/"
   },
   "licenses": [
   {
@@ -33,12 +28,5 @@
     "name": "Jeremie Miller",
     "email": "jeremie@jabber.org",
     "url": "http://jeremie.com/"
-  },
-  "maintainers": [
-    {
-    "name": "Jeremie Miller",
-    "email": "jeremie@jabber.org",
-    "url": "http://jeremie.com/"
-    }
-  ]
+  }
 }
