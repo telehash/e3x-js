@@ -21,25 +21,22 @@ defaults.link_timer = defaults.nat_timeout - (5*1000); // how often the DHT link
 defaults.link_max = 256; // maximum number of links to maintain overall (minimum one packet per link timer)
 defaults.link_k = 8; // maximum number of links to maintain per bucket
 
-exports.isHashname = function(hex)
-{
-  return isHEX(hex, 64);
-}
-
 exports.switch = function()
 {
-  var self = this = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, networks:{}, CSets:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, networks:{}, CSets:{}};
 
-  self.load = function(keys)
+  self.load = function(id)
   {
-    if(!keys || !keys.parts) return "bad keys";
-    self.parts = keys.parts;
-    var err = loadkeys(self,keys);
+    if(!id || !id.parts) return "bad keys";
+    self.parts = id.parts;
+    self.id = id;
+    var err = loadkeys(self);
     if(err) return err;
     if(Object.keys(self.cs).length == 0) return "missing cipher sets";
     self.hashname = parts2hn(self.parts);
+    return false;
   }
-  self.create = keysgen;
+  self.make = keysgen;
 
   // configure defaults
   self.nat = false;
@@ -124,8 +121,19 @@ exports.switch = function()
   self.bridge = bridge;
   
   // for modules
+  self.pencode = pencode;
+  self.pdecode = pdecode;
   self.isLocalIP = isLocalIP;
   self.randomHEX = randomHEX;
+  self.isHashname = function(hex){return isHEX(hex, 64)};
+  self.wraps = channelWraps;
+  self.waits = [];
+  self.waiting = false
+  self.wait = function(bool){
+    if(bool) return self.waits.push(true);
+    self.waits.pop();
+    if(self.waiting && self.waits.length == 0) self.waiting();
+  }
   
   linkLoop(self);
   return self;
@@ -162,7 +170,7 @@ self.raw(type, callback)
 */
 
 // these are called once a reliable channel is started both ways to add custom functions for the app
-exports.channelWraps = {
+var channelWraps = {
 	"bulk":function(chan){
     // handle any incoming bulk flow
     var bulkIn = "";
@@ -300,6 +308,7 @@ function addSeed(arg) {
 function online(callback)
 {
 	var self = this;
+  if(self.waits.length > 0) return self.waiting = function(){self.online(callback)};
   self.isOnline = true;
   // ping lan
   self.lanToken = randomHEX(16);
@@ -435,7 +444,7 @@ function receive(msg, path)
 
 		// decrypt and process
     var err;
-	  if((err = self.CSets[from.csid].delineize(packet.from, packet))) return debug("couldn't decrypt line",err,packet.sender);
+	  if((err = self.CSets[line.csid].delineize(line, packet))) return debug("couldn't decrypt line",err,packet.sender);
     line.lineAt = line.openAt;
     line.receive(packet);
     return;
@@ -562,7 +571,7 @@ function whois(hashname)
     if(hn.lineIn)
     {
       debug("line sending",hn.hashname,hn.lineIn);
-      var lined = packet.msg || self.CSets[to.csid].lineize(hn, packet);
+      var lined = packet.msg || self.CSets[hn.csid].lineize(hn, packet);
       hn.sentAt = Date.now();
 
       // directed packets are preferred, just dump and done
@@ -781,16 +790,6 @@ function whois(hashname)
     });
   }
 
-  // create an outgoing TeleSocket
-  hn.socket = function(pathname)
-  {
-    if(!pathname) pathname = "/";
-    // passing id forces internal/unescaped mode
-    var chan = hn.start("ts",{bare:true,js:{path:pathname}});
-    chan.wrap("TS");
-    return chan.socket;
-  }
-  
   return hn;
 }
 
@@ -1006,10 +1005,8 @@ function channel(type, arg, callback)
   // used by app to change how it interfaces with the channel
   chan.wrap = function(wrap)
   {
-    var chan = this;
-    if(!exports.channelWraps[wrap]) return false;
-    exports.channelWraps[wrap](chan);
-    return chan;
+    if(!channelWraps[wrap]) return false;
+    return channelWraps[wrap](chan);
   }
 
   // called to do eventual cleanup
@@ -1690,16 +1687,16 @@ function getkey(id, csid)
   return id.cs && id.cs[csid] && id.cs[csid].key;
 }
 
-function loadkeys(self, keys)
+function loadkeys(self)
 {
   self.cs = {};
-  self.keys = {}; // for convenience
+  self.keys = {};
   var err = false;
   Object.keys(self.parts).forEach(function(csid){
-    self.keys[csid] = keys[csid];
     self.cs[csid] = {};
     if(!self.CSets[csid]) err = csid+" not supported";
-    err = err||self.CSets[csid].loadkey(self.cs[csid], keys[csid], keys[csid+"_secret"]);
+    err = err||self.CSets[csid].loadkey(self.cs[csid], self.id[csid], self.id[csid+"_secret"]);
+    self.keys[csid] = self.id[csid];
   });
   return err;
 }
@@ -1751,7 +1748,7 @@ function deopenize(self, open)
 //  console.log("DEOPEN",open.body.length);
   var ret;
   var csid = open.head.charCodeAt().toString(16);
-  if(!CS[csid]) return {err:"unknown CSID of "+csid};
+  if(!self.CSets[csid]) return {err:"unknown CSID of "+csid};
   try{ret = self.CSets[csid].deopenize(self, open);}catch(E){return {err:E};}
   ret.csid = csid;
   return ret;

@@ -18,7 +18,8 @@ The `telehash` package in npm bundles most of these, but here's a list of all of
 * [ipv4](https://github.com/telehash/telehash-ipv4) - node
 * [ipv6](https://github.com/telehash/telehash-ipv6) - node
 
-## API
+<a name="api" />
+## Common API
 
 This module exports one function called `switch` to create a new blank switch:
 
@@ -27,9 +28,21 @@ var thjs = require("thjs");
 var self = new thjs.switch();
 ```
 
-A switch exposes the following methods:
+The [telehash](https://github.com/telehash/node-telehash) provides it's own environment-friendly startup/init wrappers, and once you have a running switch it exposes the following methods:
 
-* **self.load({keys})** - loads hashname from keys in the format `{"parts":{...}, "1a":"public base64", "1a_secret":"secret base64"}`
-* **self.create(cbDone,cbStep)** - creates a new hashname, calls back `cbDone(err, keys)` when finished, and the optional `cbStep()` to show progress for slow systems
 * **self.listen("type",cbListen)** - when a new incoming channel is requested for this type, pass it to `cbListen(err,packet,chan)`
 * **self.start("hashname","type",{args},cbStart)** - creates a new outgoing channel of this type, calls `cbStart(err,packet,chan)`, args should include `"js":{...}` and optional `"body":Buffer`.
+
+Modules may extend this and provide additional API methods.
+
+## Low Level API
+
+A switch exposes the following core methods:
+
+* **self.make(cbDone,cbStep)** - creates a new hashname id, calls back `cbDone(err, id)` when finished, and the optional `cbStep()` to show progress for slow systems
+* **self.load({id})** - loads hashname from id in the format `{"parts":{...}, "1a":"public base64", "1a_secret":"secret base64"}`
+* **self.addSeed({seed})** - adds info for a seed in the json format
+* **self.online(cbOnline)** - turns this switch on, `cbOnline(err)`
+* **self.whois(hashname)** - returns a hashname object (mostly for internal use)
+
+
