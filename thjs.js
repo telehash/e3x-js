@@ -611,12 +611,10 @@ function whois(hashname)
           var path = {type:"ipv4",ip:address[2],port:parseInt(address[3])};
           self.send(path,pencode());
           // if possibly behind the same NAT, set flag to allow/ask to relay a local path
-          if(self.nat && address[2] == (self.paths.pub4 && self.paths.pub4.ip)) hn.relayAsk = "local";
-        }else{ // no ip address, must relay
-          hn.relayAsk = true;
+          if(self.nat && address[2] == (self.paths.pub4 && self.paths.pub4.ip)) hn.isLocal = true;
         }
-        // TODO, if we've tried+failed a peer already w/o a relay, add relay
-        self.whois(via).peer(hn.hashname, address[1], hn.relayAsk); // send the peer request
+        // send the peer request
+        self.whois(via).peer(hn.hashname, address[1]);
       });
     }
 
@@ -719,20 +717,11 @@ function whois(hashname)
   }
 
   // send a simple lossy peer request, don't care about answer
-  hn.peer = function(hashname, csid, relay)
+  hn.peer = function(hashname, csid)
   {
     if(!csid || !self.parts[csid]) return;
     var js = {"peer":hashname};
-    js.paths = [];
-    if(self.paths.pub4) js.paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
-    if(self.paths.pub6) js.paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
-    if(self.paths.http) js.paths.push({type:"http", http:self.paths.http.http});
-    // note: don't include webrtc since it's private and done during a path sync
-    if(hn.isLocal)
-    {
-      if(self.paths.lan4) js.paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
-      if(self.paths.lan6) js.paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});
-    }
+    js.paths = hn.pathsOut();
     hn.raw("peer",{js:js, body:getkey(self,csid)}, function(err, packet, chan){
       if(err) return;
       if(!packet.body) return warn("relay in w/ no body",packet.js,packet.from.hashname);
@@ -752,26 +741,33 @@ function whois(hashname)
     return hn.opened;
   }
 
+  // generate current paths array to them, for peer and paths requests
+  hn.pathsOut = function()
+  {
+    var paths = [];
+    if(self.paths.pub4) paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
+    if(self.paths.pub6) paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
+    if(self.paths.http)
+    {
+      if(self.paths.http.http) paths.push({type:"http", http:self.paths.http.http});
+      else if(self.paths.pub4) paths.push({type:"http", http:"http://"+self.paths.pub4.ip+":"+self.paths.http.port});
+    }
+    if(self.paths.webrtc) paths.push({type:"webrtc"});
+    if(hn.isLocal)
+    {
+      if(self.paths.lan4) paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
+      if(self.paths.lan6) paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});
+    }
+    return paths;
+  }
+
   // send a full network path sync
   hn.sync = function()
   {
     debug("SYNCING",hn.hashname,hn.paths.map(function(p){return JSON.stringify(p.json)}));
 
     // compose all of our known paths we can send to them
-    var paths = [];
-    // if no ip paths and we have some, signal them
-    if(self.paths.pub4) paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
-    if(self.paths.pub6) paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
-    // if we support http path too
-    if(self.paths.http) paths.push({type:"http",http:self.paths.http.http});
-    // if we support webrtc
-    if(self.paths.webrtc) paths.push({type:"webrtc"});
-    // include local ip/port if we're relaying to them
-    if(hn.relayAsk == "local")
-    {
-      if(self.paths.lan4) paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
-      if(self.paths.lan6) paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});
-    }
+    var paths = hn.pathsOut();
 
     // check all paths at once
     hn.paths.forEach(function(path){
