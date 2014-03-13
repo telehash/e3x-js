@@ -440,11 +440,11 @@ function receive(msg, path)
       self.bridgeCache[id] = true;
       // flat out raw retransmit any bridge packets
       return self.send(self.bridgeLine[lineID],msg);
-	  }
+    }
 
-		// decrypt and process
+    // decrypt and process
     var err;
-	  if((err = self.CSets[line.csid].delineize(line, packet))) return debug("couldn't decrypt line",err,packet.sender);
+    if((err = self.CSets[line.csid].delineize(line, packet))) return debug("couldn't decrypt line",err,packet.sender);
     line.lineAt = line.openAt;
     line.receive(packet);
     return;
@@ -746,7 +746,7 @@ function whois(hashname)
   // return the current open packet
   hn.open = function()
   {
-    if(!hn.public) return false; // can't open if no key
+    if(!hn.parts) return false; // can't open if no key
     if(hn.opened) return hn.opened;
     hn.opened = openize(self,hn);
     return hn.opened;
