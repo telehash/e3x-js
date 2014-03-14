@@ -667,7 +667,7 @@ function whois(hashname)
 
     // verify incoming new chan id
     if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
-    if(packet.js.c < (hn.chanIn-2)) return warn("old channel id",packet.js.c,hn.chanIn);
+    if(packet.js.c < (hn.chanIn-4)) return warn("old channel id",packet.js.c,hn.chanIn);
     hn.chanIn = packet.js.c;
 
     // make the correct kind of channel;
