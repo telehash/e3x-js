@@ -355,7 +355,7 @@ function receive(msg, path)
   packet.sender = path;
   packet.id = self.pcounter++;
   packet.at = Date.now();
-  debug(">>>>",Date(),(typeof msg.length == "function")?msg.length():msg.length, packet.head_length, packet.body_length,[path.type,path.ip,path.port,path.id].join(","));
+  debug(">>>>",Date(),msg.length, packet.head_length, packet.body_length,[path.type,path.ip,path.port,path.id].join(","));
 
   // handle any LAN notifications
   if(packet.js.type == "lan") return inLan(self, packet);

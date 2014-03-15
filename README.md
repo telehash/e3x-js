@@ -24,7 +24,7 @@ The `telehash` package in npm bundles most of these, but here's a list of all of
 This module exports one function called `switch` to create a new blank switch:
 
 ```js
-var thjs = require("thjs");
+var thjs = require("telehash-js");
 var self = new thjs.switch();
 ```
 
