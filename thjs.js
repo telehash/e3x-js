@@ -55,7 +55,7 @@ exports.switch = function()
     if(!msg) return warn("send called w/ no packet, dropping");
     if(!path) return warn("send called w/ no network, dropping");
     if(to) to.pathOut(path);
-    debug("<<<<",Date(),(typeof msg.length == "function")?msg.length():msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
+    debug("<<<<",Date(),msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
 
     // try to send it via a supported network
     if(self.networks[path.type]) self.networks[path.type](path,msg,to);
