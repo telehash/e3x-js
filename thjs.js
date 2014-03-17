@@ -390,7 +390,7 @@ function receive(msg, path)
     // if new line id, reset incoming channels
     if(open.js.line != from.lineIn)
     {
-      from.chanIn = 0;
+      from.chanInDone = 0;
       Object.keys(from.chans).forEach(function(id){
         if(id % 2 == from.chanOut % 2) return; // our ids
         from.chans[id].fail({js:{err:"reset"}});
@@ -667,13 +667,19 @@ function whois(hashname)
 
     // verify incoming new chan id
     if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
-    if(packet.js.c < (hn.chanIn-4)) return warn("old channel id",packet.js.c,hn.chanIn);
-    hn.chanIn = packet.js.c;
+    if(packet.js.c <= hn.chanInDone) return warn("old channel id",packet.js.c,hn.chanInDone);
 
     // make the correct kind of channel;
     var kind = (listening == self.raws) ? "raw" : "start";
-    var chan = hn[kind](packet.js.type, {id:packet.js.c}, listening[packet.js.type]);
+    var chan = hn[kind](packet.js.type, {bare:true,id:packet.js.c}, listening[packet.js.type]);
     chan.receive(packet);
+  }
+  
+  hn.chanDone = function(id)
+  {
+    delete hn.chans[id];
+    // track highest inactive channel to prevent replay
+    if(id % 2 != hn.chanOut % 2 && id > hn.chanInDone) hn.chanInDone = id;
   }
 
   // track who told us about this hn
@@ -708,11 +714,30 @@ function whois(hashname)
   // request a new link to them
   hn.link = function(callback)
   {
+    if(!callback) callback = function(){}
+
     var js = {seed:self.seed};
-    js.see = self.buckets[hn.bucket].map(function(see){ return see.address(hn); }).filter(function(x){return x}).slice(0,5);
+    js.see = self.buckets[hn.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(seed){ return seed.address(hn) }).slice(0,8);
+    // add some distant ones if none
+    if(!js.see.length) Object.keys(self.buckets).forEach(function(bucket){
+      if(js.see.length >= 8) return;
+      self.buckets[bucket].sort(function(a,b){ return a.age - b.age }).forEach(function(seed){
+        if(js.see.length >= 8 || !seed.seed || js.see.indexOf(seed.address(hn)) != -1) return;
+        js.see.push(seed.address(hn));
+      });
+    });
+
+    if(self.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
+
+    if(hn.linked)
+    {
+      hn.linked.send({js:js});
+      return callback();
+    }
+
     hn.raw("link", {retry:3, js:js}, function(err, packet, chan){
-      if(callback) callback(packet.js.err,Array.isArray(packet.js.see)?packet.js.see:[]);
       inLink(err, packet, chan);
+      callback(packet.js.err);
     });
   }
 
@@ -816,7 +841,7 @@ function seek(hn, callback)
     queue.push(seed.hashname);
   });
 
-  debug("seek starting with",queue);
+  debug("seek starting with",queue,seeds.length);
 
   // always process potentials in order
   function sort()
@@ -945,7 +970,7 @@ function raw(type, arg, callback)
 
   chan.fail = function(packet){
     if(chan.ended) return; // prevent multiple calls
-    delete hn.chans[chan.id];
+    hn.chanDone(chan.id);
     chan.ended = true;
     if(packet)
     {
@@ -1012,7 +1037,7 @@ function channel(type, arg, callback)
     debug("channel done",chan.id);
     setTimeout(function(){
       // fire .callback(err) on any outq yet?
-      delete hn.chans[chan.id];
+      hn.chanDone(chan.id);
     }, chan.timeout);
   };
 
@@ -1353,30 +1378,20 @@ function inLink(err, packet, chan)
   var self = packet.from.self;
   chan.timeout(defaults.nat_timeout*2); // two NAT windows to be safe
 
+  // add in this link
+  if(!packet.from.age) packet.from.age = Date.now();
+  packet.from.linked = chan;
+  packet.from.seed = packet.js.seed;
+  if(self.buckets[packet.from.bucket].indexOf(packet.from) == -1) self.buckets[packet.from.bucket].push(packet.from);
+
   // send a response if this is a new incoming
-  if(!chan.sentAt)
-  {
-    var js = {seed:self.seed};
-    js.see = self.buckets[packet.from.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(hn){ return hn.address(packet.from) }).slice(0,8);
-    // add some distant ones if none
-    if(!js.see.length) Object.keys(self.buckets).forEach(function(bucket){
-      if(js.see.length >= 8) return;
-      self.buckets[bucket].sort(function(a,b){ return a.age - b.age }).forEach(function(seed){
-        if(js.see.length >= 8 || !seed.seed || js.see.indexOf(seed.address(packet.from)) != -1) return;
-        js.see.push(seed.address(packet.from));
-      });
-    });
-
-    if(self.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
-
-    // TODO, check link_max and end it or evict another
-    chan.send({js:js});
-  }
+  if(!chan.sentAt) packet.from.link();
 
   // look for any see and check to see if we should create a link
   if(Array.isArray(packet.js.see)) packet.js.see.forEach(function(address){
     var hn = self.whois(address);
-    if(hn && self.buckets[hn.bucket].length < defaults.link_k) hn.link();
+    if(!hn || hn.linked) return;
+    if(self.buckets[hn.bucket].length < defaults.link_k) hn.link();
   });
 
   // check for bridges
@@ -1384,12 +1399,6 @@ function inLink(err, packet, chan)
     if(!self.bridges[type]) self.bridges[type] = {};
     self.bridges[type][packet.from.hashname] = Date.now();
   });
-
-  // add in this link
-  if(!packet.from.age) packet.from.age = Date.now();
-  packet.from.linked = chan;
-  packet.from.seed = packet.js.seed;
-  if(self.buckets[packet.from.bucket].indexOf(packet.from) == -1) self.buckets[packet.from.bucket].push(packet.from);
 
   // let mainteanance handle
   chan.callback = inMaintenance;

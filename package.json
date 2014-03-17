@@ -2,7 +2,7 @@
   "name": "telehash-js",
   "description": "An implementation of telehash in pure javascript",
   "homepage": "https://github.com/telehash/thjs",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "keywords": [
     "telehash",
     "crypto",
