@@ -393,7 +393,7 @@ function receive(msg, path)
       debug("new line");
       Object.keys(from.chans).forEach(function(id){
         if(id % 2 == from.chanOut % 2) return; // our ids
-        from.chans[id].fail({js:{err:"reset"}});
+        if(from.chans[id]) from.chans[id].fail({js:{err:"reset"}});
         delete from.chans[id];
       });
     }
