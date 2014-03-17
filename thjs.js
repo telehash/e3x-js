@@ -390,12 +390,13 @@ function receive(msg, path)
     // if new line id, reset incoming channels
     if(open.js.line != from.lineIn)
     {
-      from.chanInDone = 0;
+      debug("new line");
       Object.keys(from.chans).forEach(function(id){
         if(id % 2 == from.chanOut % 2) return; // our ids
         from.chans[id].fail({js:{err:"reset"}});
         delete from.chans[id];
       });
+      from.chanInDone = 0;
     }
 
     // update values
@@ -559,8 +560,8 @@ function whois(hashname)
 
     path.lastIn = Date.now();
     self.recvAt = Date.now();
-    if(!pathValid(hn.to)) hn.to = path;
-    hn.alive = (hn.to.type != "relay")?true:false;
+    if(!pathValid(hn.to) || pathValid(path)) hn.to = path;
+    hn.alive = pathValid(hn.to);
 
     return path;
   }
