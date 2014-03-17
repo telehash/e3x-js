@@ -396,7 +396,6 @@ function receive(msg, path)
         from.chans[id].fail({js:{err:"reset"}});
         delete from.chans[id];
       });
-      from.chanInDone = 0;
     }
 
     // update values
@@ -648,6 +647,7 @@ function whois(hashname)
 
     // find any existing channel
     var chan = hn.chans[packet.js.c];
+    if(chan === false) return; // drop packet for a closed channel
     if(chan) return chan.receive(packet);
 
     // start a channel if one doesn't exist, check either reliable or unreliable types
@@ -668,7 +668,6 @@ function whois(hashname)
 
     // verify incoming new chan id
     if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
-    if(packet.js.c <= hn.chanInDone) return warn("old channel id",packet.js.c,hn.chanInDone);
 
     // make the correct kind of channel;
     var kind = (listening == self.raws) ? "raw" : "start";
@@ -678,9 +677,7 @@ function whois(hashname)
   
   hn.chanDone = function(id)
   {
-    delete hn.chans[id];
-    // track highest inactive channel to prevent replay
-    if(id % 2 != hn.chanOut % 2 && id > hn.chanInDone) hn.chanInDone = id;
+    hn.chans[id] = false;
   }
 
   // track who told us about this hn
