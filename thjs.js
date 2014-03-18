@@ -559,6 +559,11 @@ function whois(hashname)
 
     path.lastIn = Date.now();
     self.recvAt = Date.now();
+    
+    // end any active relay
+    if(hn.to && hn.to.type == "relay" && path.type != "relay") hn.to.relay.fail();
+
+    // update default if better
     if(!pathValid(hn.to) || pathValid(path)) hn.to = path;
     hn.alive = pathValid(hn.to);
 
@@ -573,7 +578,7 @@ function whois(hashname)
       debug("line sending",hn.hashname,hn.lineIn);
       var lined = packet.msg || self.CSets[hn.csid].lineize(hn, packet);
       hn.sentAt = Date.now();
-
+      
       // directed packets are preferred, just dump and done
       if(packet.to) return self.send(packet.to, lined, hn);
 
@@ -796,7 +801,7 @@ function whois(hashname)
     hn.paths.forEach(function(path){
       debug("PATHLOOP",hn.paths.length,JSON.stringify(path.json));
       var js = {};
-      js.path = path.json;
+      if(path.type != "relay") js.path = path.json;
       // our outgoing priority of this path
       js.priority = (path.type == "relay") ? 0 : 1;
       if(paths.length > 0) js.paths = paths;
@@ -1033,10 +1038,7 @@ function channel(type, arg, callback)
     if(chan.ended) return; // prevent multiple calls
     chan.ended = true;
     debug("channel done",chan.id);
-    setTimeout(function(){
-      // fire .callback(err) on any outq yet?
-      hn.chanDone(chan.id);
-    }, chan.timeout);
+    hn.chanDone(chan.id);
   };
 
   // used to internally fail a channel, timeout or connection failure
@@ -1070,7 +1072,7 @@ function channel(type, arg, callback)
 
     // in errored state, only/always reply with the error and drop
     if(chan.errored) return chan.send(chan.errored);
-    if(!packet.js.end) chan.lastIn = Date.now();
+    chan.lastIn = Date.now();
 
     // process any valid newer incoming ack/miss
     var ack = parseInt(packet.js.ack);
@@ -1135,10 +1137,14 @@ function channel(type, arg, callback)
     if(!packet) return;
     chan.handling = true;
     if(!chan.safe) packet.js = packet.js._ || {}; // unescape all content json
-    chan.callback(packet.js.end, packet, chan, function(){
+    chan.callback(packet.js.end, packet, chan, function(ack){
+      // catch whenever it was ended to start cleanup
+      if(packet.js.end) chan.endIn = true;
+      if(chan.endOut && chan.endIn) chan.done();
       chan.inq.shift();
       chan.inDone++;
       chan.handling = false;
+      if(ack) chan.ack(); // auto-ack functionality
       chan.handler();
     });
   }
@@ -1194,7 +1200,8 @@ function channel(type, arg, callback)
     hn.send(packet);
 
     // catch whenever it was ended to start cleanup
-    if(packet.js.end) chan.done();
+    if(packet.js.end) chan.endOut = true;
+    if(chan.endOut && chan.endIn) chan.done();
   }
 
   // send content reliably
