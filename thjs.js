@@ -125,6 +125,7 @@ exports.switch = function()
   self.pdecode = pdecode;
   self.isLocalIP = isLocalIP;
   self.randomHEX = randomHEX;
+  self.uriparse = uriparse;
   self.isHashname = function(hex){return isHEX(hex, 64)};
   self.wraps = channelWraps;
   self.waits = [];
@@ -1764,3 +1765,20 @@ function deopenize(self, open)
   return ret;
 }
 
+var urllib = require("url");
+function uriparse(uri)
+{
+  // node's uri parser enforces dns max 63 chars per label, grr!
+  if(typeof uri !== "string") uri = "";
+  var hashname = uri.match(/[0-9A-Fa-f]{64}/);
+  if(!hashname) return urllib.parse(uri);
+  var full = hashname[0];
+  var part = full.substr(0,32);
+  var u = urllib.parse(uri.replace(full,part));
+  if(u.hostname != part) return urllib.parse(uri); // hashname was not the hostname
+  Object.keys(u).forEach(function(k){
+    if(typeof u[k] != "string") return;
+    u[k] = u[k].replace(part,full);
+  });
+  return u;
+}
