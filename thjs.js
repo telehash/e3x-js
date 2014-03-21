@@ -478,13 +478,13 @@ function whois(hashname)
 {
   var self = this;
   // validations
-  if(!hashname) { warn("whois called without a hashname", hashname); return false; }
+  if(!hashname) { warn("whois called without a hashname", hashname, new Error().stack); return false; }
   if(typeof hashname != "string") { warn("wrong type, should be string", typeof hashname,hashname); return false; }
   hashname = hashname.split(",")[0]; // convenience if an address is passed in
   if(!isHEX(hashname, 64)) { warn("whois called without a valid hashname", hashname); return false; }
 
   // never return ourselves
-  if(hashname === self.hashname) return false;
+  if(hashname === self.hashname) { debug("whois called for self"); return false; }
 
   var hn = self.all[hashname];
   if(hn) return hn;
@@ -1395,6 +1395,7 @@ function inLink(err, packet, chan)
 
   // look for any see and check to see if we should create a link
   if(Array.isArray(packet.js.see)) packet.js.see.forEach(function(address){
+    if(!address) return; // garbage
     var hn = self.whois(address);
     if(!hn || hn.linked) return;
     if(self.buckets[hn.bucket].length < defaults.link_k) hn.link();
