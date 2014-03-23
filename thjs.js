@@ -53,8 +53,8 @@ exports.switch = function()
   };
   self.send = function(path, msg, to){
     if(!msg) return warn("send called w/ no packet, dropping");
-    if(!path) return warn("send called w/ no network, dropping");
-    if(to) to.pathOut(path);
+    if(to) path = to.pathOut(path);
+    if(!path) return warn("send called w/ no valid network, dropping");
     debug("<<<<",Date(),msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
 
     // try to send it via a supported network
@@ -299,9 +299,9 @@ function addSeed(arg) {
   var seed = self.whokey(arg.parts,false,arg.keys);
   if(!seed) return warn("invalid seed info",arg);
   if(Array.isArray(arg.paths)) arg.paths.forEach(function(path){
-    seed.pathGet(path);
+    path = seed.pathGet(path);
+    path.seed = true;
   });
-  if(arg.bridge) seed.bridging = true;
   seed.isSeed = true;
   self.seeds.push(seed);
 }
@@ -530,9 +530,23 @@ function whois(hashname)
 
   hn.pathOut = function(path)
   {
+    if(!path) return false;
     path = hn.pathGet(path);
+    if(path.type == "relay" && path.relay.ended) return hn.pathEnd(path);
     path.lastOut = Date.now();
     if(!pathValid(hn.to) && pathValid(path)) hn.to = path;
+    return path;
+  }
+  
+  hn.pathEnd = function(path)
+  {
+    if(path.seed) return false; // never remove a seed-path
+    if(hn.to == path) hn.to = false;
+    path.gone = true;
+    var index = hn.paths.indexOf(path);
+    if(index >= 0) hn.paths.splice(index,1);
+    debug("PATH END",JSON.stringify(path.json));
+    return false;
   }
 
   // manage network information consistently, called on all validated incoming packets
@@ -553,6 +567,16 @@ function whois(hashname)
         hn.ip = path.ip;
         hn.port = path.port;
       }
+      
+      // cull any invalid paths of the same type
+      hn.paths.forEach(function(other){
+        if(other == path) return;
+        if(other.type != path.type) return;
+        if(!pathValid(other)) hn.pathEnd(other);
+      });
+      
+      // "local" custom paths, we must bridge for
+      if(path.type == "local") hn.bridging = true;
 
       // track overall if we trust them as local
       if(isLocalPath(path)) hn.isLocal = true;
@@ -723,7 +747,7 @@ function whois(hashname)
     var js = {seed:self.seed};
     js.see = self.buckets[hn.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(seed){ return seed.address(hn) }).slice(0,8);
     // add some distant ones if none
-    if(!js.see.length) Object.keys(self.buckets).forEach(function(bucket){
+    if(js.see.length < 8) Object.keys(self.buckets).forEach(function(bucket){
       if(js.see.length >= 8) return;
       self.buckets[bucket].sort(function(a,b){ return a.age - b.age }).forEach(function(seed){
         if(js.see.length >= 8 || !seed.seed || js.see.indexOf(seed.address(hn)) != -1) return;
@@ -731,7 +755,7 @@ function whois(hashname)
       });
     });
 
-    if(self.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
+    if(self.bridging || hn.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
 
     if(hn.linked)
     {
@@ -802,7 +826,7 @@ function whois(hashname)
     hn.paths.forEach(function(path){
       debug("PATHLOOP",hn.paths.length,JSON.stringify(path.json));
       var js = {};
-      if(path.type != "relay") js.path = path.json;
+      if(["relay","local"].indexOf(path.type) == -1) js.path = path.json;
       // our outgoing priority of this path
       js.priority = (path.type == "relay") ? 0 : 1;
       if(paths.length > 0) js.paths = paths;
@@ -1290,7 +1314,7 @@ function relay(self, from, to, packet)
 
   // check to see if we should set the bridge flag for line packets
   var js;
-  if(self.bridging)
+  if(self.bridging || from.bridging || to.bridging)
   {
     var bp = pdecode(packet.body);
     if(bp.head.length == 0 && !to.bridged)
@@ -1570,6 +1594,7 @@ function pathMatch(path1, paths)
   var match;
   if(!Array.isArray(paths)) return match;
   paths.forEach(function(path2){
+    if(path2.type != path1.type) return;
     switch(path1.type)
     {
     case "relay":
@@ -1582,8 +1607,10 @@ function pathMatch(path1, paths)
       if(path1.http == path2.http) match = path2;
       break;
     case "local":
-    case "webrtc":
       if(path1.id == path2.id) match = path2;
+      break;
+    case "webrtc":
+      match = path2; // always matches
       break;
     }
   });
@@ -1593,13 +1620,12 @@ function pathMatch(path1, paths)
 // validate if a network path is acceptable to stop at
 function pathValid(path)
 {
-  if(!path) return false;
+  if(!path || path.gone) return false;
   if(path.type == "relay" && !path.relay.ended) return true; // active relays are always valid
   if(!path.lastIn) return false; // all else must receive to be valid
   if(Date.now() - path.lastIn < defaults.nat_timeout) return true; // received anything recently is good
   return false;
 }
-
 
 function partsMatch(parts1, parts2)
 {
