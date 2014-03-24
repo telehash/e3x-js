@@ -52,9 +52,9 @@ exports.switch = function()
     path.relay.send({body:msg});
   };
   self.send = function(path, msg, to){
-    if(!msg) return warn("send called w/ no packet, dropping");
+    if(!msg) return debug("send called w/ no packet, dropping");
     if(to) path = to.pathOut(path);
-    if(!path) return warn("send called w/ no valid network, dropping");
+    if(!path) return debug("send called w/ no valid network, dropping");
     debug("<<<<",Date(),msg.length,[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
 
     // try to send it via a supported network
