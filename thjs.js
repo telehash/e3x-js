@@ -1390,7 +1390,7 @@ function inSeek(err, packet, chan)
   // sort by distance for more
   links.sort(function(a,b){ return dhash(seek,a.hashname) - dhash(seek,b.hashname)}).forEach(function(link){
     if(seen[link.hashname]) return;
-    if(link.seed || link.hashname.substr(seek.length) == seek)
+    if(link.seed || link.hashname.substr(0,seek.length) == seek)
     {
       see.push(link.address(packet.from));
       seen[link.hashname] = true;
@@ -1699,6 +1699,7 @@ function pdecode(packet)
 {
   if(!packet) return undefined;
   var buf = (typeof packet == "string") ? new Buffer(packet, "binary") : packet;
+  if(packet.length < 2) return undefined;
 
   // read and validate the json length
   var len = buf.readUInt16BE(0);
