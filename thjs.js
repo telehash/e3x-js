@@ -1686,6 +1686,12 @@ function parts2hn(parts)
 // encode a packet
 function pencode(js, body)
 {
+  // be flexible, take {js:{},body:...} as first arg
+  if(!body && js && js.js)
+  {
+    body = js.body;
+    js = js.js;
+  }
   var head = (typeof js == "number") ? new Buffer(String.fromCharCode(js)) : new Buffer(js?JSON.stringify(js):"", "utf8");
   if(typeof body == "string") body = new Buffer(body, "binary");
   body = body || new Buffer(0);
