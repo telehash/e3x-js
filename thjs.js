@@ -23,7 +23,7 @@ defaults.link_k = 8; // maximum number of links to maintain per bucket
 
 exports.switch = function()
 {
-  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:{}, bridgeCache:{}, networks:{}, CSets:{}};
+  var self = {seeds:[], locals:[], lines:{}, bridges:{}, bridgeLine:{}, all:{}, buckets:[], capacity:[], rels:{}, raws:{}, paths:[], bridgeCache:{}, networks:{}, CSets:{}};
 
   self.load = function(id)
   {
@@ -39,7 +39,6 @@ exports.switch = function()
   self.make = keysgen;
 
   // configure defaults
-  self.nat = false;
   self.seed = true;
 
   // udp socket stuff
@@ -66,14 +65,18 @@ exports.switch = function()
     // no network support or unresponsive path, try a bridge
     self.bridge(path,msg,to);
   };
-  self.pathSet = function(path)
+  self.pathSet = function(path, del)
   {
-    var updated = (self.paths[path.type] && JSON.stringify(self.paths[path.type]) == JSON.stringify(path));
-    self.paths[path.type] = path;
-    // if ip4 and local ip, set nat mode
-    if(path.type == "ipv4") self.nat = isLocalIP(path.ip);
-    // trigger pings if our address changed
-    if(self.isOnline && !updated)
+    var existing;
+    if(!path) return;
+    if((existing = pathMatch(path,self.paths)))
+    {
+      if(del) self.paths.splice(self.paths.indexOf(existing),1);
+      return;
+    }
+    self.paths.push(path);
+    // trigger pings if we're online
+    if(self.isOnline)
     {
       debug("local network updated, checking links")
       linkMaint(self);
@@ -126,6 +129,7 @@ exports.switch = function()
   self.isLocalIP = isLocalIP;
   self.randomHEX = randomHEX;
   self.uriparse = uriparse;
+  self.pathMatch = pathMatch;
   self.isHashname = function(hex){return isHEX(hex, 64)};
   self.wraps = channelWraps;
   self.waits = [];
@@ -640,8 +644,10 @@ function whois(hashname)
           // NAT hole punching
           var path = {type:"ipv4",ip:address[2],port:parseInt(address[3])};
           self.send(path,pencode());
-          // if possibly behind the same NAT, set flag to allow/ask to relay a local path
-          if(self.nat && address[2] == (self.paths.pub4 && self.paths.pub4.ip)) hn.isLocal = true;
+          // if possibly behind the same NAT (same public ip), set flag to allow/ask to share local paths
+          self.paths.forEach(function(path2){
+            if(path2.type == "ipv4" && path2.ip == path.ip) hn.isLocal = true;
+          })
         }
         // send the peer request
         self.whois(via).peer(hn.hashname, address[1]);
@@ -798,19 +804,10 @@ function whois(hashname)
   hn.pathsOut = function()
   {
     var paths = [];
-    if(self.paths.pub4) paths.push({type:"ipv4", ip:self.paths.pub4.ip, port:self.paths.pub4.port});
-    if(self.paths.pub6) paths.push({type:"ipv6", ip:self.paths.pub6.ip, port:self.paths.pub6.port});
-    if(self.paths.http)
-    {
-      if(self.paths.http.http) paths.push({type:"http", http:self.paths.http.http});
-      else if(self.paths.pub4) paths.push({type:"http", http:"http://"+self.paths.pub4.ip+":"+self.paths.http.port});
-    }
-    if(self.paths.webrtc) paths.push({type:"webrtc"});
-    if(hn.isLocal)
-    {
-      if(self.paths.lan4) paths.push({type:"ipv4", ip:self.paths.lan4.ip, port:self.paths.lan4.port});
-      if(self.paths.lan6) paths.push({type:"ipv6", ip:self.paths.lan6.ip, port:self.paths.lan6.port});
-    }
+    self.paths.forEach(function(path){
+      if(isLocalPath(path) && !hn.isLocal) return;
+      paths.push(path);
+    });
     return paths;
   }
 
@@ -861,7 +858,7 @@ function seek(hn, callback)
   Object.keys(self.buckets).forEach(function(bucket){
     self.buckets[bucket].forEach(function(link){
       if(link.hashname == hn) return; // ignore the one we're (re)seeking
-      if(link.seed) seeds.push(link);
+      if(link.seed && link.alive) seeds.push(link);
     });
   });
   seeds.sort(function(a,b){ return dhash(hn.hashname,a.hashname) - dhash(hn.hashname,b.hashname) }).slice(0,3).forEach(function(seed){
@@ -1345,15 +1342,14 @@ function inPeer(err, packet, chan)
   // sanity on incoming paths array
   if(!Array.isArray(packet.js.paths)) packet.js.paths = [];
 
-  // insert in incoming IP path
-  if(packet.sender.type.indexOf("ip") == 0) packet.js.paths.push(packet.sender.json);
+  // insert in incoming IP path (safely)
+  if(packet.sender.type.indexOf("ip") == 0 && (!isLocalPath(packet.sender) || peer.isLocal)) packet.js.paths.push(packet.sender.json);
 
   // load/cleanse all paths
   js.paths = [];
   packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return;
     if(pathMatch(js.paths,path)) return; // duplicate
-    if(isLocalPath(path) && !peer.isLocal) return; // don't pass along local paths to public
     js.paths.push(path);
   });
 
@@ -1472,8 +1468,10 @@ function inPath(err, packet, chan)
   // if path info from a seed, update our public ip/port
   if(packet.from.isSeed && typeof packet.js.path == "object" && packet.js.path.type == "ipv4" && !isLocalIP(packet.js.path.ip))
   {
-    debug("updating public ipv4",JSON.stringify(self.paths.pub4),JSON.stringify(packet.js.path));
-    self.pathSet({type:"pub4", ip:packet.js.path.ip, port:parseInt(packet.js.path.port)})
+    debug("updating public ipv4",JSON.stringify(self.pub4),JSON.stringify(packet.js.path));
+    self.pathSet(self.pub4,true);
+    self.pub4 = {type:"ipv4", ip:packet.js.path.ip, port:parseInt(packet.js.path.port)};
+    self.pathSet(self.pub4);
   }
 
   // update any optional priority information
@@ -1592,13 +1590,14 @@ function hex2nib(hex)
 function pathMatch(path1, paths)
 {
   var match;
-  if(!Array.isArray(paths)) return match;
+  if(!path1 || !Array.isArray(paths)) return match;
   paths.forEach(function(path2){
-    if(path2.type != path1.type) return;
+    if(!path2 || path2.type != path1.type) return;
     switch(path1.type)
     {
     case "relay":
       if(path1.relay == path2.relay) match = path2;
+      break;
     case "ipv4":
     case "ipv6":
       if(path1.ip == path2.ip && path1.port == path2.port) match = path2;
