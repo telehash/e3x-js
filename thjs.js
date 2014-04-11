@@ -131,6 +131,7 @@ exports.switch = function()
   self.uriparse = uriparse;
   self.pathMatch = pathMatch;
   self.isHashname = function(hex){return isHEX(hex, 64)};
+  self.isBridge = isBridge;
   self.wraps = channelWraps;
   self.waits = [];
   self.waiting = false
@@ -295,6 +296,19 @@ function bridge(path, msg, to)
     self.send(packet.sender,path.bridgeq);
     delete path.bridgeq;
   });
+}
+
+// configures or checks
+function isBridge(arg)
+{
+  var self = this;
+  if(arg === true) self.bridging = true;  
+  if(self.bridging) return true;
+  if(!arg) return self.bridging;
+
+  var check = (typeof arg == "string")?self.whois(arg):arg;
+  if(check && check.bridging) return true;
+  return false;
 }
 
 function addSeed(arg) {
@@ -620,7 +634,7 @@ function whois(hashname)
 
     // we've fallen through, either no line, or no valid paths
     debug("alive failthrough",hn.sendSeek,Object.keys(hn.vias||{}));
-    hn.alive = false;
+    hn.alive = hn.openAt = false;
     hn.lastPacket = packet; // will be resent if/when an open is received
 
     // always send to all known paths, increase resiliency
@@ -761,7 +775,7 @@ function whois(hashname)
       });
     });
 
-    if(self.bridging || hn.bridging) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
+    if(self.isBridge(hn)) js.bridges = Object.keys(self.networks).filter(function(type){return (["local","relay"].indexOf(type) >= 0)?false:true});
 
     if(hn.linked)
     {
@@ -1311,7 +1325,7 @@ function relay(self, from, to, packet)
 
   // check to see if we should set the bridge flag for line packets
   var js;
-  if(self.bridging || from.bridging || to.bridging)
+  if(self.isBridge(from.hashname) || self.isBridge(to.hashname))
   {
     var bp = pdecode(packet.body);
     if(bp && bp.head.length == 0 && !to.bridged)
@@ -1485,8 +1499,7 @@ function inPath(err, packet, chan)
   // need to respond, prioritize everything above relay
   var priority = (packet.sender.type == "relay") ? 0 : 2;
 
-  // if bridging, and this path is from the bridge, flag it for lower priority
-  if(packet.from.bridge && pathMatch(packet.sender, self.whois(packet.from.bridge).paths)) priority = 1;
+  // TODO lower bridge priorities
 
   chan.send({js:{end:true, priority:priority, path:packet.sender.json}});
 }
@@ -1501,7 +1514,7 @@ function inBridge(err, packet, chan)
   if(!isHEX(packet.js.to,32) || !isHEX(packet.js.from,32) || typeof packet.js.path != "object") return warn("invalid bridge request",JSON.stringify(packet.js),packet.from.hashname);
 
   // must be allowed either globally or per hashname
-  if(!self.bridging && !packet.from.bridging) return chan.send({js:{err:"not allowed"}});
+  if(!self.isBridge(packet.from)) return chan.send({js:{err:"not allowed"}});
 
   // don't bridge for types we don't know
   if(!self.networks[packet.js.path.type]) return chan.send({js:{err:"bad path"}});
