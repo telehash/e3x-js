@@ -370,7 +370,7 @@ function receive(msg, path)
   if(packet.head.length == 1)
   {
     var open = deopenize(self, packet);
-    if (!open || !open.verify) return warn("couldn't decode open",open);
+    if (!open || !open.verify) return warn("couldn't decode open (possibly using the wrong public key?)",open&&open.err);
     if (!isHEX(open.js.line, 32)) return warn("invalid line id enclosed",open.js.line);
     if(open.js.to !== self.hashname) return warn("open for wrong hashname",open.js.to);
     var csid = partsMatch(self.parts,open.js.from);
@@ -1314,7 +1314,7 @@ function relay(self, from, to, packet)
   if(self.bridging || from.bridging || to.bridging)
   {
     var bp = pdecode(packet.body);
-    if(bp.head.length == 0 && !to.bridged)
+    if(bp && bp.head.length == 0 && !to.bridged)
     {
       to.bridged = true;
       self.bridgeLine[bp.body.slice(0,16).toString("hex")] = to.last;
@@ -1719,7 +1719,7 @@ function pdecode(packet)
     try {
       js = JSON.parse(head.toString("utf8"));
     } catch(E) {
-      console.log("couldn't parse JS",head.toString("hex"),E,packet.sender);
+      console.log("couldn't parse JS",buf.toString("hex"),E);
       return undefined;
     }
   }
