@@ -801,7 +801,8 @@ function whois(hashname)
       // create a network path that maps back to this channel
       var path = {type:"relay",relay:chan,json:{type:"relay",relay:packet.from.hashname}};
       if(packet.js.bridge) path = packet.sender; // sender is offering to bridge, use them!
-      self.receive(packet.body, path);
+      if(packet.js.warn) info("relay warning",packet.js.warn);
+      if(packet.body) self.receive(packet.body, path);
     });
   }
 
@@ -1292,7 +1293,8 @@ function inConnect(err, packet, chan)
     // create a virtual network path that maps back to this channel
     var path = {type:"relay",relay:chan,json:{type:"relay",relay:packet.from.hashname}};
     if(packet.js.bridge) path = packet.sender; // sender is offering to bridge, use them!
-    self.receive(packet.body, path);
+    if(packet.js.warn) info("relay warning",packet.js.warn);
+    if(packet.body) self.receive(packet.body, path);
     return;
   }
 
@@ -1321,7 +1323,12 @@ function relay(self, from, to, packet)
     from.relays = 0;
   }
   from.relays++;
-  if(from.relays > 5) return debug("relay too fast, dropping",from.relays);
+  if(from.relays > 5)
+  {
+    debug("relay too fast, dropping",from.relays);
+    from.send({js:{warn:"dropped"}});
+    return;
+  }
 
   // check to see if we should set the bridge flag for line packets
   var js;
