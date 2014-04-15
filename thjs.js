@@ -1364,8 +1364,12 @@ function inPeer(err, packet, chan)
   // sanity on incoming paths array
   if(!Array.isArray(packet.js.paths)) packet.js.paths = [];
 
-  // insert in incoming IP path (safely)
-  if(packet.sender.type.indexOf("ip") == 0 && (!isLocalPath(packet.sender) || peer.isLocal)) packet.js.paths.push(packet.sender.json);
+  // insert all usable/safe sender paths
+  packet.from.paths.forEach(function(path){
+    if(["relay","local"].indexOf(path.type) != -1) return;
+    if(isLocalPath(path) && !peer.isLocal) return;
+    packet.js.paths.push(path);
+  });
 
   // load/cleanse all paths
   js.paths = [];
