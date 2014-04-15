@@ -826,29 +826,30 @@ function whois(hashname)
     return paths;
   }
 
+  // individual path ping
+  hn.path = function(path)
+  {
+    debug("PATHPING",JSON.stringify(path.json));
+    var js = {};
+    var paths = hn.pathsOut();
+    if(paths.length > 0) js.paths = paths;
+    if(["relay","local"].indexOf(path.type) == -1) js.path = path.json;
+    // our outgoing priority of this path
+    js.priority = (path.type == "relay") ? 0 : 1;
+    var lastIn = path.lastIn;
+    hn.raw("path",{js:js, timeout:3000, to:path}, function(err, packet){
+      // when it actually errored and hasn't been active, invalidate it
+      if(err && err !== true && path.lastIn == lastIn) path.lastIn = 0;
+      else inPath(true, packet); // handles any response .priority and .paths
+    });
+  }
+
   // send a full network path sync
   hn.sync = function()
   {
     debug("SYNCING",hn.hashname,hn.paths.map(function(p){return JSON.stringify(p.json)}));
-
-    // compose all of our known paths we can send to them
-    var paths = hn.pathsOut();
-
     // check all paths at once
-    hn.paths.forEach(function(path){
-      debug("PATHLOOP",hn.paths.length,JSON.stringify(path.json));
-      var js = {};
-      if(["relay","local"].indexOf(path.type) == -1) js.path = path.json;
-      // our outgoing priority of this path
-      js.priority = (path.type == "relay") ? 0 : 1;
-      if(paths.length > 0) js.paths = paths;
-      var lastIn = path.lastIn;
-      hn.raw("path",{js:js, timeout:3000, to:path}, function(err, packet){
-        // when it actually errored and hasn't been active, invalidate it
-        if(err && err !== true && path.lastIn == lastIn) path.lastIn = 0;
-        else inPath(true, packet); // handles any response .priority and .paths
-      });
-    });
+    hn.paths.forEach(hn.path);
   }
 
   return hn;
@@ -1480,10 +1481,8 @@ function inPath(err, packet, chan)
   // check/try any alternate paths
   if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return; // invalid
-    // don't send to ones we know about
-    if(pathMatch(path, packet.from.paths)) return;
     // a new one, experimentally send it a path
-    packet.from.raw("path",{js:{priority:1},to:path}, inPath);
+    if(!pathMatch(path, packet.from.paths)) packet.from.path(path);
   });
 
   // if path info from a seed, update our public ip/port
