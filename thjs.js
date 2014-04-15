@@ -1317,20 +1317,6 @@ function relay(self, from, to, packet)
   if(from.ended && !to.ended) return to.fail({js:{err:"disconnected"}});
   if(to.ended && !from.ended) return from.fail({js:{err:"disconnected"}});
 
-  // throttle
-  if(!from.relayed || Date.now() - from.relayed > 1000)
-  {
-    from.relayed = Date.now();
-    from.relays = 0;
-  }
-  from.relays++;
-  if(from.relays > 5)
-  {
-    debug("relay too fast, dropping",from.relays);
-    from.send({js:{warn:"dropped"}});
-    return;
-  }
-
   // check to see if we should set the bridge flag for line packets
   var js;
   if(self.isBridge(from.hashname) || self.isBridge(to.hashname))
@@ -1341,8 +1327,23 @@ function relay(self, from, to, packet)
       to.bridged = true;
       self.bridgeLine[bp.body.slice(0,16).toString("hex")] = to.last;
     }
-    // have to seen both directions to bridge
-    if(from.bridged && to.bridged) js = {"bridge":true};
+  }
+  // have to seen both directions to bridge
+  if(from.bridged && to.bridged) js = {"bridge":true};
+
+  // throttle
+  if(!from.relayed || Date.now() - from.relayed > 1000)
+  {
+    from.relayed = Date.now();
+    from.relays = 0;
+  }
+  from.relays++;
+  if(from.relays > 5)
+  {
+    debug("relay too fast, dropping",from.relays);
+    js.warn = "dropped";
+    from.send({js:js});
+    return;
   }
 
   from.relayed = Date.now();
