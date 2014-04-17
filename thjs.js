@@ -1318,7 +1318,7 @@ function relay(self, from, to, packet)
   if(to.ended && !from.ended) return from.fail({js:{err:"disconnected"}});
 
   // check to see if we should set the bridge flag for line packets
-  var js;
+  var js = {};
   if(self.isBridge(from.hashname) || self.isBridge(to.hashname))
   {
     var bp = pdecode(packet.body);
@@ -1369,7 +1369,7 @@ function inPeer(err, packet, chan)
   packet.from.paths.forEach(function(path){
     if(["relay","local"].indexOf(path.type) != -1) return;
     if(isLocalPath(path) && !peer.isLocal) return;
-    packet.js.paths.push(path);
+    packet.js.paths.push(path.json);
   });
 
   // load/cleanse all paths
