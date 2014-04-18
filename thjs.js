@@ -590,7 +590,9 @@ function whois(hashname)
       hn.paths.forEach(function(other){
         if(other == path) return;
         if(other.type != path.type) return;
-        if(!pathValid(other)) hn.pathEnd(other);
+        if(!pathValid(other)) return hn.pathEnd(other);
+        // remove any previous path on the same IP
+        if(path.ip && other.ip == path.ip) hn.pathEnd(other);
       });
       
       // "local" custom paths, we must bridge for
