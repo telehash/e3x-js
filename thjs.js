@@ -853,6 +853,21 @@ function whois(hashname)
     // check all paths at once
     hn.paths.forEach(hn.path);
   }
+  
+  // create a ticket buffer to this hn w/ this packet
+  hn.ticket = function(packet)
+  {
+    if(self.pencode(packet).length > 1024) return false;
+    return ticketize(self, hn, packet);
+  }
+
+  // decode a ticket buffer from them
+  hn.ticketed = function(ticket)
+  {
+    packet = pdecode(ticket);
+    if(!packet) return false;
+    return deticketize(self, hn, packet);
+  }
 
   return hn;
 }
@@ -1794,6 +1809,35 @@ function keysgen(cbDone,cbStep)
     self.CSets[csid].genkey(ret,pop,cbStep);
   }
   pop();
+}
+
+function ticketize(self, to, inner)
+{
+  if(!to.csid)
+  {
+    console.log("can't ticket w/ no key");
+    return false;
+  }
+  var tcs = {};
+  tcs.public = to.public;
+  return self.CSets[to.csid].openize(self, tcs, pencode(inner));
+}
+
+function deticketize(self, from, open)
+{
+  var ret;
+  var csid = open.head.charCodeAt().toString(16);
+  if(!self.CSets[csid] || csid != from.csid) ret = {err:"invalid CSID of "+csid};
+  else{
+    open.from = from;
+    try{ret = self.CSets[csid].deopenize(self, open);}catch(E){ret = {err:E};}    
+  }
+  if(ret.err || !ret.inner)
+  {
+    debug("deticketize failed",ret.err);
+    return false;
+  }
+  return ret.inner;
 }
 
 function openize(self, to)
