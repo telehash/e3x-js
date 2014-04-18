@@ -592,7 +592,9 @@ function whois(hashname)
         if(other.type != path.type) return;
         if(!pathValid(other)) return hn.pathEnd(other);
         // remove any previous path on the same IP
-        if(path.ip && other.ip == path.ip) hn.pathEnd(other);
+        if(path.ip && other.ip == path.ip) return hn.pathEnd(other);
+        // remove any previous http path entirely
+        if(path.type == "http") return hn.pathEnd(other);
       });
       
       // "local" custom paths, we must bridge for
@@ -1818,8 +1820,9 @@ function ticketize(self, to, inner)
     console.log("can't ticket w/ no key");
     return false;
   }
+  // clone the recipient CS stuff to gen new ephemeral line state
   var tcs = {};
-  tcs.public = to.public;
+  self.CSets[to.csid].loadkey(tcs,to.key);
   return self.CSets[to.csid].openize(self, tcs, pencode(inner));
 }
 
