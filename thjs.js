@@ -331,7 +331,9 @@ function online(callback)
   self.isOnline = true;
   // ping lan
   self.lanToken = randomHEX(16);
-  self.send({type:"lan"}, pencode({type:"lan",lan:self.lanToken,from:self.parts}));
+  var js = {type:"ping",token:self.lanToken};
+  Object.keys(self.parts).forEach(function(csid){js[csid] = true;});
+  self.send({type:"lan"}, pencode(js));
 
   var dones = self.seeds.length;
   if(!dones) {
@@ -376,9 +378,9 @@ function receive(msg, path)
   packet.at = Date.now();
   debug(">>>>",Date(),msg.length, packet.head.length, [path.type,path.ip,path.port,path.id].join(","));
 
-  // handle any LAN notifications
-  if(packet.js.type == "lan") return inLan(self, packet);
-  if(packet.js.type == "seed") return inLanSeed(self, packet);
+  // handle any discovery requests
+  if(packet.js.type == "ping") return inPing(self, packet);
+  if(packet.js.type == "pong") return inPong(self, packet);
 
   // either it's an open
   if(packet.head.length == 1)
@@ -1560,32 +1562,34 @@ function inBridge(err, packet, chan)
   chan.send({js:{end:true}});
 }
 
-// type lan, looking for a local seed
-function inLan(self, packet)
+// someone's looking for a local seed
+function inPing(self, packet)
 {
-  if(packet.js.lan == self.lanToken) return; // ignore ourselves
+  if(packet.js.token == self.lanToken) return; // ignore ourselves
   if(self.locals.length > 0) return; // someone locally is announcing already
   if(self.lanSkip == self.lanToken) return; // often immediate duplicates, skip them
+  debug("PING-PONG",packet.js,packet.sender);
   self.lanSkip = self.lanToken;
   // announce ourself as the seed back
-  var csid = partsMatch(self.parts,packet.js.from);
+  var csid = partsMatch(self.parts,packet.js);
   if(!csid) return;
-  packet.js.type = "seed";
-  packet.js.from = self.parts;
-  self.send({type:"lan"}, pencode(packet.js, getkey(self,csid)));
+  var js = {type:"pong",from:self.parts,token:packet.js.token};
+  self.send(packet.sender, pencode(js, getkey(self,csid)));
 }
 
 // answers from any LAN broadcast notice we sent
-function inLanSeed(self, packet)
+function inPong(self, packet)
 {
-  if(packet.js.lan != self.lanToken) return;
+  debug("PONG",JSON.stringify(packet.js),JSON.stringify(packet.sender));
+  if(packet.js.token != self.lanToken) return;
   if(self.locals.length >= 5) return warn("locals full");
   if(!packet.body || packet.body.length == 0) return;
   var to = self.whokey(packet.js.from,packet.body);
   if(!to) return warn("invalid lan request from",packet.js.from,packet.sender);
   to.local = true;
   debug("local seed open",to.hashname,JSON.stringify(packet.sender));
-  to.open(packet.sender);
+  self.send(packet.sender,to.open(),to);
+  to.link();
 }
 
 // utility functions
