@@ -373,7 +373,7 @@ function receive(msg, path)
 {
   var self = this;
   var packet = pdecode(msg);
-  if(!packet) return warn("failed to decode a packet from", path, msg.toString());
+  if(!packet) return warn("failed to decode a packet from", path, msg.toString("hex"));
   if(packet.length == 2) return; // empty packets are NAT pings
 
   packet.sender = path;
@@ -830,8 +830,11 @@ function whois(hashname)
     if(paths.length > 0) js.paths = paths;
     var alive = [];
     hn.raw("path",{js:js, timeout:10*1000}, function(err, packet){
-      if(err) hn.pathSyncing = false;
-      if(!packet) return;
+      if(err)
+      {
+        hn.pathSyncing = false;
+        return;
+      }
 
       // if path answer is from a seed, update our public ip/port in case we're behind a NAT
       if(packet.from.isSeed && typeof packet.js.path == "object" && packet.js.path.type == "ipv4" && !isLocalIP(packet.js.path.ip))
@@ -1020,7 +1023,6 @@ function raw(type, arg, callback)
     packet.js.c = chan.id;
     debug("SEND",chan.type,JSON.stringify(packet.js));
     chan.sentAt = Date.now();
-    if(!packet.to && pathValid(chan.last)) packet.to = chan.last; // always send back to the last received for this channel
     hn.send(packet);
     // if err'd or ended, delete ourselves
     if(packet.js.err || packet.js.end) chan.fail();
