@@ -3,7 +3,7 @@ telehash implemented in pure javascript
 
 This is now the core module to implement a [telehash](http://telehash.org) switch, other modules are required to enable it to support crypto and network interfaces.
 
-If you're looking to use this in node or browserify, check out the npm [telehash](https://github.com/telehash/node-telehash) package (`npm install telehash`).  To see some example usage, try the [fieldtest](https://github.com/telehash/fieldtest) which works in node, browser, and as a chrome app.
+If you're looking to use this in node or browserify, check out the npm [telehash](https://github.com/telehash/node-telehash) package (`npm install telehash`).  To see some example usage, try the [fieldtest](https://github.com/quartzjer/fieldtest) which works in node, browser, and as a chrome app.
 
 ## Modules
 
