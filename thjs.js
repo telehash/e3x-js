@@ -795,6 +795,7 @@ function whois(hashname)
     js.paths = hn.pathsOut();
     hn.raw("peer",{js:js, body:getkey(self,csid)}, function(err, packet, chan){
       if(err) return;
+      if(!chan.relay) chan.relay = self.whois(hashname);
       inRelay(self, chan, packet);
     });
   }
