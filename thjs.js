@@ -488,7 +488,6 @@ function whokey(parts, key, keys)
   if(!csid) return false;
   hn = self.whois(parts2hn(parts));
   if(!hn) return false;
-  hn.parts = parts;
   if(keys) key = keys[csid]; // convenience for addSeed
   var err = loadkey(self,hn,csid,key);
   if(err)
@@ -496,6 +495,14 @@ function whokey(parts, key, keys)
     warn("whokey err",hn.hashname,err);
     return false;
   }
+  if(crypto.createHash("sha256").update(hn.key).digest("hex") != parts[csid])
+  {
+    warn("whokey part mismatch",hn.hashname,csid,parts[csid],crypto.createHash("sha256").update(hn.key).digest("hex"));
+    delete hn.key;
+    return false;
+  }
+  hn.parts = parts;
+  
   return hn;
 }
 
@@ -1775,7 +1782,7 @@ function loadkeys(self)
     if(!self.CSets[csid]) err = csid+" not supported";
     err = err||self.CSets[csid].loadkey(self.cs[csid], self.id[csid], self.id[csid+"_secret"]);
     self.keys[csid] = self.id[csid];
-    self.parts[csid] = crypto.createHash("sha256").update(self.keys[csid]).digest("hex");
+    self.parts[csid] = crypto.createHash("sha256").update(self.cs[csid].key).digest("hex");
   });
   return err;
 }
