@@ -30,8 +30,7 @@ exports.switch = function()
 
   self.load = function(id)
   {
-    if(!id || !id.parts) return "bad keys";
-    self.parts = id.parts;
+    if(typeof id != "object") return "bad keys";
     self.id = id;
     var err = loadkeys(self);
     if(err) return err;
@@ -142,6 +141,12 @@ exports.switch = function()
     if(bool) return self.waits.push(true);
     self.waits.pop();
     if(self.waiting && self.waits.length == 0) self.waiting();
+  }
+  self.ping = function(){
+    if(!self.tracer) self.tracer = randomHEX(16);
+    var js = {type:"ping",trace:self.tracer};
+    Object.keys(self.parts).forEach(function(csid){js[csid] = true;});
+    return js;
   }
 
   linkLoop(self);
@@ -333,10 +338,7 @@ function online(callback)
   if(self.waits.length > 0) return self.waiting = function(){self.online(callback)};
   self.isOnline = true;
   // ping lan
-  self.lanToken = randomHEX(16);
-  var js = {type:"ping",token:self.lanToken};
-  Object.keys(self.parts).forEach(function(csid){js[csid] = true;});
-  self.send({type:"lan"}, pencode(js));
+  self.send({type:"lan"}, pencode(self.ping()));
 
   var dones = self.seeds.length;
   if(!dones) {
@@ -373,7 +375,7 @@ function receive(msg, path)
 {
   var self = this;
   var packet = pdecode(msg);
-  if(!packet) return warn("failed to decode a packet from", path, msg.toString("hex"));
+  if(!packet) return warn("failed to decode a packet from", path, (new Buffer(msg)).toString("hex"));
   if(packet.length == 2) return; // empty packets are NAT pings
 
   packet.sender = path;
@@ -1551,15 +1553,15 @@ function inBridge(err, packet, chan)
 // someone's looking for a local seed
 function inPing(self, packet)
 {
-  if(packet.js.token == self.lanToken) return; // ignore ourselves
+  if(packet.js.trace == self.tracer) return; // ignore ourselves
   if(self.locals.length > 0) return; // someone locally is announcing already
-  if(self.lanSkip == self.lanToken) return; // often immediate duplicates, skip them
+  if(self.lanSkip && self.lanSkip == packet.js.trace) return; // often immediate duplicates, skip them
   debug("PING-PONG",packet.js,packet.sender);
-  self.lanSkip = self.lanToken;
+  self.lanSkip = packet.js.trace;
   // announce ourself as the seed back
   var csid = partsMatch(self.parts,packet.js);
   if(!csid) return;
-  var js = {type:"pong",from:self.parts,token:packet.js.token};
+  var js = {type:"pong",from:self.parts,trace:packet.js.trace};
   self.send(packet.sender, pencode(js, getkey(self,csid)));
 }
 
@@ -1567,7 +1569,7 @@ function inPing(self, packet)
 function inPong(self, packet)
 {
   debug("PONG",JSON.stringify(packet.js),JSON.stringify(packet.sender));
-  if(packet.js.token != self.lanToken) return;
+  if(packet.js.trace != self.tracer) return;
   if(self.locals.length >= 5) return warn("locals full");
   if(!packet.body || packet.body.length == 0) return;
   var to = self.whokey(packet.js.from,packet.body);
@@ -1765,12 +1767,15 @@ function loadkeys(self)
 {
   self.cs = {};
   self.keys = {};
+  self.parts = {};
   var err = false;
-  Object.keys(self.parts).forEach(function(csid){
+  Object.keys(self.id).forEach(function(csid){
+    if(csid.length != 2) return; // only csid keys
     self.cs[csid] = {};
     if(!self.CSets[csid]) err = csid+" not supported";
     err = err||self.CSets[csid].loadkey(self.cs[csid], self.id[csid], self.id[csid+"_secret"]);
     self.keys[csid] = self.id[csid];
+    self.parts[csid] = crypto.createHash("sha256").update(self.keys[csid]).digest("hex");
   });
   return err;
 }
@@ -1784,7 +1789,7 @@ function loadkey(self, id, csid, key)
 function keysgen(cbDone,cbStep)
 {
   var self = this;
-  var ret = {parts:{}};
+  var ret = {};
   var todo = Object.keys(self.CSets);
   if(todo.length == 0) return cbDone("no sets supported");
   function pop(err)
