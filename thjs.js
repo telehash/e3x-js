@@ -76,11 +76,12 @@ exports.switch = function()
       if(del) self.paths.splice(self.paths.indexOf(existing),1);
       return;
     }
+    debug("local path add",JSON.stringify(path));
+    info("self",path.type,JSON.stringify(path));
     self.paths.push(path);
     // trigger pings if we're online
     if(self.isOnline)
     {
-      debug("local network updated, checking links")
       linkMaint(self);
     }
   }
@@ -407,11 +408,11 @@ function receive(msg, path)
     if(from.openAt && open.js.at <= from.openAt && from.lineAt == from.openAt) return;
 
     // open is legit!
-    debug("inOpen verified", from.hashname);
     from.recvAt = Date.now();
 
     // add this path in and sync paths
     path = from.pathIn(path);
+    debug("inOpen verified", from.hashname,JSON.stringify(path.json));
     setTimeout(from.pathSync,1); // in background
 
     // if new line id, reset incoming channels
@@ -583,7 +584,7 @@ function whois(hashname)
     // first time we've seen em
     if(!path.lastIn && !path.lastOut)
     {
-      debug("PATH INNEW",JSON.stringify(path.json),hn.paths.map(function(p){return JSON.stringify(p.json)}));
+      debug("PATH INNEW",isLocalPath(path)?"local":"public",JSON.stringify(path.json),hn.paths.map(function(p){return JSON.stringify(p.json)}));
 
       // update public ipv4 info
       if(path.type == "ipv4" && !isLocalIP(path.ip))
@@ -992,6 +993,7 @@ function raw(type, arg, callback)
     chan.id = hn.chanOut;
     hn.chanOut += 2;
   }
+  chan.isOut = (chan.id % 2 == hn.chanOut % 2);
   hn.chans[chan.id] = chan;
 
   // raw channels always timeout/expire after the last sent/received packet
@@ -1084,6 +1086,7 @@ function channel(type, arg, callback)
     chan.id = hn.chanOut;
     hn.chanOut += 2;
   }
+  chan.isOut = (chan.id % 2 == hn.chanOut % 2);
   hn.chans[chan.id] = chan;
   chan.timeout = arg.timeout || defaults.chan_timeout;
   // app originating if not bare, be friendly w/ the type, don't double-underscore if they did already
@@ -1647,10 +1650,11 @@ function pathMatch(path1, paths)
     case "http":
       if(path1.http == path2.http) match = path2;
       break;
+    default:
+      // all other paths match based on id, local, webrtc, etc
+      if(path1.id === path2.id) match = path2;
     }
     if(match) return;
-    // all other paths match based on id, local, webrtc, etc
-    if(path1.id === path2.id) match = path2;
   });
   return match;
 }
@@ -1678,6 +1682,7 @@ function isLocalPath(path)
 {
   if(!path || !path.type) return false;
   if(path.type == "bluetooth") return true;
+  if(path.type == "http" && typeof path.http == "string") return isLocalIP(require("url").parse(path.http).hostname);
   if(["ipv4","ipv6"].indexOf(path.type) >= 0) return isLocalIP(path.ip);
   // http?
   return false;
