@@ -15,7 +15,7 @@ defaults.chan_autoack = 1000; // is how often we auto ack if the app isn't gener
 defaults.chan_resend = 2000; // resend the last packet after this long if it wasn't acked in a durable channel
 defaults.chan_outbuf = 100; // max size of outgoing buffer before applying backpressure
 defaults.chan_inbuf = 50; // how many incoming packets to cache during processing/misses
-defaults.nat_timeout = 60*1000; // nat timeout for inactivity
+defaults.nat_timeout = 30*1000; // nat timeout for inactivity
 defaults.idle_timeout = 5*defaults.nat_timeout; // overall inactivity timeout
 defaults.link_timer = defaults.nat_timeout - (5*1000); // how often the DHT link maintenance runs
 defaults.link_max = 256; // maximum number of links to maintain overall (minimum one packet per link timer)
@@ -413,7 +413,7 @@ function receive(msg, path)
     // add this path in and sync paths
     path = from.pathIn(path);
     debug("inOpen verified", from.hashname,JSON.stringify(path.json));
-    setTimeout(from.pathSync,1); // in background
+    setTimeout(function(){from.pathSync()},1); // in background
 
     // if new line id, reset incoming channels
     if(open.js.line != from.lineIn)
@@ -1234,7 +1234,7 @@ function channel(type, arg, callback)
     }
     debug("channel resending");
     chan.ack(lastpacket);
-    setTimeout(chan.resend, defaults.chan_resend); // recurse until chan_timeout
+    setTimeout(function(){chan.resend()}, defaults.chan_resend); // recurse until chan_timeout
   }
 
   // add/create ack/miss values and send
@@ -1301,7 +1301,7 @@ function channel(type, arg, callback)
 
     // to auto-resend if it isn't acked
     if(chan.resender) clearTimeout(chan.resender);
-    chan.resender = setTimeout(chan.resend, defaults.chan_resend);
+    chan.resender = setTimeout(function(){chan.resend()}, defaults.chan_resend);
     return chan;
   }
 
