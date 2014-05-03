@@ -1415,7 +1415,7 @@ function inPeer(err, packet, chan)
   js.paths = [];
   packet.js.paths.forEach(function(path){
     if(typeof path.type != "string") return;
-    if(pathMatch(js.paths,path)) return; // duplicate
+    if(pathMatch(path,js.paths)) return; // duplicate
     js.paths.push(path);
   });
 
