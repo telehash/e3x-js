@@ -419,12 +419,13 @@ function receive(msg, path)
     {
       debug("new line");
       Object.keys(from.chans).forEach(function(id){
-        // skip channels that haven't received a packet, they're new waiting outgoing-opening!
-        if(!from.chans[id].recvAt) return;
+        // SPECIAL CASE: skip channels that haven't received a packet, they're new waiting outgoing-opening ones!
+        if(from.chans[id] && !from.chans[id].recvAt) return;
         // fail all other channels, send alert for any handlers
         var chan = from.chans[id];
-        from.chanDone(id);
-        chan.fail({js:{err:"reset"}});
+        delete from.chans[id]; // actually remove so new ones can come in
+        // if there's still a channel, notify any handlers, TODO refactor this too much implicit
+        if(chan) chan.fail({js:{err:"reset"}});
       });
     }
 
@@ -732,6 +733,8 @@ function whois(hashname)
   
   hn.chanDone = function(id)
   {
+    if(!hn.chans[id]) return;
+    debug("channel done",id,hn.hashname);
     hn.chans[id] = false;
   }
 
@@ -796,7 +799,7 @@ function whois(hashname)
       return callback();
     }
 
-    hn.raw("link", {retry:3, js:js}, function(err, packet, chan){
+    hn.linked = hn.raw("link", {retry:3, js:js}, function(err, packet, chan){
       inLink(err, packet, chan);
       callback(packet.js.err);
     });
@@ -1589,7 +1592,7 @@ function inBridge(err, packet, chan)
 function inPing(self, packet)
 {
   if(packet.js.trace == self.tracer) return; // ignore ourselves
-  if(self.locals.length > 0) return; // someone locally is announcing already
+  if(self.locals.length > 1) return; // more than one locally is announcing already
   if(self.lanSkip && self.lanSkip == packet.js.trace) return; // often immediate duplicates, skip them
   debug("PING-PONG",packet.js,packet.sender);
   self.lanSkip = packet.js.trace;
