@@ -419,9 +419,12 @@ function receive(msg, path)
     {
       debug("new line");
       Object.keys(from.chans).forEach(function(id){
-        if(id % 2 == from.chanOut % 2) return; // our ids
-        if(from.chans[id]) from.chans[id].fail({js:{err:"reset"}});
-        delete from.chans[id];
+        // skip channels that haven't received a packet, they're new waiting outgoing-opening!
+        if(!from.chans[id].recvAt) return;
+        // fail all other channels, send alert for any handlers
+        var chan = from.chans[id];
+        from.chanDone(id);
+        chan.fail({js:{err:"reset"}});
       });
     }
 
@@ -1150,7 +1153,7 @@ function channel(type, arg, callback)
 
     // in errored state, only/always reply with the error and drop
     if(chan.errored) return chan.send(chan.errored);
-    chan.lastIn = Date.now();
+    chan.recvAt = Date.now();
     chan.last = packet.sender;
 
     // process any valid newer incoming ack/miss
