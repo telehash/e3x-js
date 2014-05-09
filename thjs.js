@@ -464,7 +464,7 @@ function receive(msg, path)
 
     // a matching line is required to decode the packet
     if(!line) {
-      if(!self.bridgeLine[lineID]) return debug("unknown line received", lineID, JSON.stringify(packet.sender));
+      if(!self.bridgeLine[lineID]) return debug("unknown line received", lineID, packet.sender);
       debug("BRIDGE",JSON.stringify(self.bridgeLine[lineID]),lineID);
       var id = crypto.createHash("sha256").update(packet.body).digest("hex")
       if(self.bridgeCache[id]) return; // drop duplicates
@@ -640,8 +640,8 @@ function whois(hashname)
     // if there's a line, try sending it via a valid network path!
     if(hn.lineIn)
     {
-      debug("line sending",hn.hashname,hn.lineIn);
-      var lined = packet.msg || self.CSets[hn.csid].lineize(hn, packet);
+      debug("line sending",hn.hashname,hn.lineIn,typeof packet);
+      var lined = Buffer.isBuffer(packet) ? packet : self.CSets[hn.csid].lineize(hn, packet);
       hn.sentAt = Date.now();
       
       // directed packets are preferred, just dump and done
@@ -744,7 +744,7 @@ function whois(hashname)
     if(typeof address != "string") warn("invalid see address",address,hn.hashname);
     if(typeof address != "string") return false;
     var parts = address.split(",");
-    if(!self.isHashname(parts[0])) return false;
+    if(!self.isHashname(parts[0]) || parts[0] == self.hashname) return false;
     var see = self.whois(parts[0]);
     if(!see) return false;
     // save suggested path if given/valid
