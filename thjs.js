@@ -52,22 +52,21 @@ exports.switch = function()
     if(!msg) return debug("send called w/ no packet, dropping")&&false;
     if(to) path = to.pathOut(path);
     debug("<<<<",Date(),msg.length,path&&[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
+    var sent = false;
 
-    // try to send it via a supported network
-    if(path && self.networks[path.type]) self.networks[path.type](path,msg,to);
+    // try to send it via a supported network or create a bridge
+    if(path) sent = self.networks[path.type] ? self.networks[path.type](path,msg,to) : self.bridge(path,msg,to);
 
     // if relay, always send it there
     if(to && to.relayChan)
     {
       to.relayChan.send({body:msg});
-      return true;
+      sent = true;
     }
 
-    // if the path is valid, we're done
-    if(pathValid(path)) return true;
-
-    // no network support or unresponsive path, try a bridge
-    return self.bridge(path,msg,to);
+    if(pathValid(path)) sent = true;
+    
+    return sent;
   };
   self.pathSet = function(path, del)
   {
@@ -299,7 +298,7 @@ function bridge(path, msg, to)
   to.bridges.push(path);
 
   // create the bridge
-  via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path}}, function(end, packet){
+  via.raw("bridge", {js:{to:to.lineIn,from:to.lineOut,path:path.json}}, function(end, packet){
     // TODO we can try another one if failed?
     if(end !== true) return debug("failed to create bridge",end,via.hashname);
     // create our mapping!
@@ -363,8 +362,8 @@ function online(callback)
       return;
     }
     dones--;
-    // failed
-    if(!dones) callback("offline",0);
+    // done checking seeds
+    if(!dones) callback(self.locals.length?null:"offline",self.locals.length);
   }
 
   self.seeds.forEach(function(seed){
@@ -653,6 +652,7 @@ function whois(hashname)
     
     // we've fallen through, either no line, or no valid paths
     hn.alive = hn.openAt = false;
+    if(Buffer.isBuffer(packet)) console.log("lined packet?!",hn.hashname,typeof hn.lastPacket,new Error().stack);
     hn.lastPacket = packet; // will be resent if/when an open is received
 
     // TODO should we rate-limit the flow into this section?
@@ -792,7 +792,7 @@ function whois(hashname)
       });
     });
 
-    if(self.isBridge(hn)) js.bridges = Object.keys(self.networks).filter(function(type){return (pathShareOrder.indexOf(type) >= 0)?true:false});
+    if(self.isBridge(hn)) js.bridges = self.paths.filter(function(path){return !isLocalPath(path)}).map(function(path){return path.type});
 
     if(hn.linked)
     {
@@ -1405,10 +1405,11 @@ function relay(self, from, to, packet)
   from.relays++;
   if(from.relays > 5)
   {
-    debug("relay too fast, dropping",from.relays);
-    js.warn = "dropped";
-    from.send({js:js});
-    return;
+    debug("relay too fast, warning",from.relays);
+    js.warn = "toofast";
+    // TODO start dropping these again in production
+//    from.send({js:js});
+//    return;
   }
 
   from.relayed = Date.now();
