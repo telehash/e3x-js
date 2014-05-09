@@ -780,6 +780,7 @@ function whois(hashname)
   {
     if(!callback) callback = function(){}
 
+    debug("LINKUP",hn.hashname);
     var js = {seed:self.seed};
     js.see = self.buckets[hn.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(seed){ return seed.address(hn) }).slice(0,8);
     // add some distant ones if none
@@ -1532,9 +1533,12 @@ function inMaintenance(err, packet, chan)
   var self = packet.from.self;
   if(err)
   {
+    debug("LINKDOWN",packet.from.hashname,err);
     delete packet.from.linked;
     var index = self.buckets[packet.from.bucket].indexOf(packet.from);
     if(index > -1) self.buckets[packet.from.bucket].splice(index,1);
+    // if this channel was ever active, try to re-start it
+    if(chan.recvAt) packet.from.link();
     return;
   }
 
