@@ -1061,7 +1061,7 @@ function raw(type, arg, callback)
       packet.js.c = chan.id;
       packet.from = hn;
       debug("CLOSING",chan.type,JSON.stringify(packet.js));
-      hn.send(packet);
+      if(chan.recvAt) hn.send(packet); // only error if we've ever gotten something
       chan.callback(packet.js.err, packet, chan, function(){});
     }
   }
@@ -1145,7 +1145,7 @@ function channel(type, arg, callback)
   chan.err = function(err){
     if(chan.errored) return;
     chan.errored = {js:{err:err,c:chan.id}};
-    hn.send(chan.errored);
+    if(chan.recvAt) hn.send(chan.errored);
     chan.done();
   };
 
