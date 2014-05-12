@@ -9,14 +9,14 @@ If you're looking to use this in node or browserify, check out the npm [telehash
 
 The `telehash` package in npm bundles most of these, but here's a list of all of the modules and where they work (please update when creating any)
 
-* [seeds](https://github.com/telehash/telehash-seeds) - node, browser
-* [cs1a](https://github.com/telehash/telehash-cs1a) - node, browser
-* [cs2a](https://github.com/telehash/telehash-cs2a) - node, browser
-* [cs3a](https://github.com/telehash/telehash-cs3a) - node
-* [http](https://github.com/telehash/telehash-http) - node, browser
-* [webrtc](https://github.com/telehash/telehash-webrtc) - browser
-* [ipv4](https://github.com/telehash/telehash-ipv4) - node
-* [ipv6](https://github.com/telehash/telehash-ipv6) - node
+* [seeds](https://github.com/Quartzjer/telehash-seeds) - node, browser
+* [cs1a](https://github.com/Quartzjer/telehash-cs1a) - node, browser
+* [cs2a](https://github.com/Quartzjer/telehash-cs2a) - node, browser
+* [cs3a](https://github.com/Quartzjer/telehash-cs3a) - node
+* [http](https://github.com/Quartzjer/telehash-http) - node, browser
+* [webrtc](https://github.com/Quartzjer/telehash-webrtc) - browser
+* [ipv4](https://github.com/Quartzjer/telehash-ipv4) - node
+* [ipv6](https://github.com/Quartzjer/telehash-ipv6) - node
 
 <a name="api" />
 ## Common API
