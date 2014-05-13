@@ -1032,6 +1032,7 @@ function raw(type, arg, callback)
     if(!hn.chans[chan.id]) return debug("dropping receive packet to dead channel",chan.id,packet.js)
     // if err'd or ended, delete ourselves
     if(packet.js.err || packet.js.end) chan.fail();
+    else chan.opened = true;
     chan.recvAt = Date.now();
     chan.last = packet.sender;
     chan.callback(packet.js.err||packet.js.end, packet, chan);
@@ -1158,6 +1159,7 @@ function channel(type, arg, callback)
     // in errored state, only/always reply with the error and drop
     if(chan.errored) return chan.send(chan.errored);
     chan.recvAt = Date.now();
+    chan.opened = true;
     chan.last = packet.sender;
 
     // process any valid newer incoming ack/miss
