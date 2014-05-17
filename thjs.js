@@ -413,10 +413,15 @@ function receive(msg, path)
     // open is legit!
     from.recvAt = Date.now();
 
+    // add this new path in
+    path = from.pathIn(path);
+    debug("inOpen verified", from.hashname,path&&JSON.stringify(path.json));
+
     // if new line id, reset incoming channels
     if(open.js.line != from.lineIn)
     {
       debug("new line");
+      from.openedAt = 0;
       Object.keys(from.chans).forEach(function(id){
         // SPECIAL CASE: skip channels that haven't received a packet, they're new waiting outgoing-opening ones!
         if(from.chans[id] && !from.chans[id].recvAt) return;
@@ -427,10 +432,6 @@ function receive(msg, path)
         if(chan) chan.fail({js:{err:"reset"}});
       });
     }
-
-    // add this new path in
-    path = from.pathIn(path);
-    debug("inOpen verified", from.hashname,path&&JSON.stringify(path.json));
 
     // send an open back if we didn't just immediately send one
     if(!from.openedAt || (Date.now() - from.openedAt) > 3*1000) self.send(path,from.open(),from);
