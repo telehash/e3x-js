@@ -736,6 +736,8 @@ function whois(hashname)
   {
     if(!hn.chans[id]) return;
     debug("channel done",id,hn.hashname);
+    // don't leave a packet around to send from this channel
+    if(hn.lastPacket && hn.lastPacket.js && hn.lastPacket.js.c == id) hn.lastPacket = false;
     hn.chans[id] = false;
   }
 
