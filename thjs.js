@@ -447,11 +447,12 @@ function receive(msg, path)
     self.CSets[open.csid].openline(from, open);
     self.lines[from.lineOut] = from;
 
-    // resend the last sent packet again now
-    if (from.lastPacket) {
-      from.send(from.lastPacket);
-      from.lastPacket = false;
-    }
+    // resend waiting packets if still valid
+    from.sendwait.forEach(function(packet){
+      if(!hn.chans[packet.js.c]) return;
+      from.send(packet);
+    });
+    from.sendwait = [];
 
     // in background sync paths
     setTimeout(function(){from.pathSync()},10);
@@ -530,7 +531,7 @@ function whois(hashname)
   if(hn) return hn;
 
   // make a new one
-  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], isAlive:0};
+  hn = self.all[hashname] = {hashname:hashname, chans:{}, self:self, paths:[], isAlive:0, sendwait:[]};
   hn.at = Date.now();
   hn.bucket = dhash(self.hashname, hashname);
   if(!self.buckets[hn.bucket]) self.buckets[hn.bucket] = [];
@@ -641,7 +642,7 @@ function whois(hashname)
   
   // try to send a packet to a hashname, doing whatever is possible/necessary
   hn.send = function(packet){
-    if(Buffer.isBuffer(packet)) console.log("lined packet?!",hn.hashname,typeof hn.lastPacket,new Error().stack);
+    if(Buffer.isBuffer(packet)) console.log("lined packet?!",hn.hashname,typeof hn.sendwait.length,new Error().stack);
     // if there's a line, try sending it via a valid network path!
     if(hn.lineIn)
     {
@@ -658,7 +659,8 @@ function whois(hashname)
     
     // we've fallen through, either no line, or no valid paths
     hn.alive = hn.openAt = false;
-    hn.lastPacket = packet; // will be resent if/when an open is received
+    // add to queue to send on line
+    if(hn.sendwait.indexOf(packet) == -1) hn.sendwait.push(packet);
 
     // TODO should we rate-limit the flow into this section?
     debug("alive failthrough",hn.sendSeek,Object.keys(hn.vias||{}));
@@ -688,7 +690,7 @@ function whois(hashname)
     {
       hn.sendSeek = Date.now();
       self.seek(hn, function(err){
-        if(!hn.lastPacket) return; // packet was already sent elsewise
+        if(!hn.sendwait.length) return; // already connected
         vias(); // process any new vias
       });
     }
@@ -731,8 +733,6 @@ function whois(hashname)
   {
     if(!hn.chans[id]) return;
     debug("channel ended",id,hn.chans[id].type,hn.hashname);
-    // don't leave a packet around to send from this channel
-    if(hn.lastPacket && hn.lastPacket.js && hn.lastPacket.js.c == id) hn.lastPacket = false;
     hn.chans[id] = false;
   }
 
