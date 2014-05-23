@@ -423,13 +423,16 @@ function receive(msg, path)
       debug("new line");
       from.openedAt = 0;
       Object.keys(from.chans).forEach(function(id){
-        // SPECIAL CASE: skip channels that haven't received a packet, they're new waiting outgoing-opening ones!
-        if(from.chans[id] && !from.chans[id].recvAt) return;
-        // fail all other channels, send alert for any handlers
         var chan = from.chans[id];
-        delete from.chans[id]; // actually remove so new ones can come in
-        // if there's still a channel, notify any handlers, TODO refactor this too much implicit
-        if(chan) chan.fail({js:{err:"reset"}});
+        if(chan)
+        {
+          // SPECIAL CASE: skip channels that haven't received a packet, they're new waiting outgoing-opening ones!
+          if(!chan.recvAt) return;
+          // fail all other active channels
+          from.receive({js:{c:chan.id,err:"reset"}});
+        }
+        // actually remove so new ones can come in
+        delete from.chans[id];
       });
     }
 
@@ -460,7 +463,7 @@ function receive(msg, path)
   if(packet.head.length == 0)
   {
     var lineID = packet.body.slice(0,16).toString("hex");
-    var line = packet.from = self.lines[lineID];
+    var line = self.lines[lineID];
 
     // a matching line is required to decode the packet
     if(!line) {
@@ -477,6 +480,7 @@ function receive(msg, path)
     var err;
     if((err = self.CSets[line.csid].delineize(line, packet))) return debug("couldn't decrypt line",err,packet.sender);
     line.linedAt = line.openAt;
+    debug("LINEIN",JSON.stringify(packet.js));
     line.receive(packet);
     return;
   }
@@ -637,11 +641,12 @@ function whois(hashname)
   
   // try to send a packet to a hashname, doing whatever is possible/necessary
   hn.send = function(packet){
+    if(Buffer.isBuffer(packet)) console.log("lined packet?!",hn.hashname,typeof hn.lastPacket,new Error().stack);
     // if there's a line, try sending it via a valid network path!
     if(hn.lineIn)
     {
       debug("line sending",hn.hashname,hn.lineIn,typeof packet);
-      var lined = Buffer.isBuffer(packet) ? packet : self.CSets[hn.csid].lineize(hn, packet);
+      var lined = self.CSets[hn.csid].lineize(hn, packet);
       hn.sentAt = Date.now();
       
       // directed packets are preferred, just dump and done
@@ -653,7 +658,6 @@ function whois(hashname)
     
     // we've fallen through, either no line, or no valid paths
     hn.alive = hn.openAt = false;
-    if(Buffer.isBuffer(packet)) console.log("lined packet?!",hn.hashname,typeof hn.lastPacket,new Error().stack);
     hn.lastPacket = packet; // will be resent if/when an open is received
 
     // TODO should we rate-limit the flow into this section?
@@ -697,10 +701,10 @@ function whois(hashname)
 //    if((Math.floor(Math.random()*10) == 4)) return warn("testing dropping randomly!");
     if(!packet.js || typeof packet.js.c != "number") return warn("dropping invalid channel packet",packet.js);
 
-    debug("LINEIN",JSON.stringify(packet.js));
     hn.recvAt = Date.now();
     // normalize/track sender network path
     packet.sender = hn.pathIn(packet.sender);
+    packet.from = hn;
 
     // find any existing channel
     var chan = hn.chans[packet.js.c];
@@ -711,17 +715,8 @@ function whois(hashname)
     var listening = {};
     if(typeof packet.js.seq == "undefined") listening = self.raws;
     if(packet.js.seq === 0) listening = self.rels;
-    if(!listening[packet.js.type])
-    {
-      // bounce error
-      if(!packet.js.end && !packet.js.err)
-      {
-        warn("bouncing unknown channel/type",packet.js);
-        var err = (packet.js.type) ? "unknown type" : "unknown channel"
-        hn.send({js:{err:err,c:packet.js.c}});
-      }
-      return;
-    }
+    // ignore/drop unknowns
+    if(!listening[packet.js.type]) return;
 
     // verify incoming new chan id
     if(packet.js.c % 2 == hn.chanOut % 2) return warn("channel id incorrect",packet.js.c,hn.chanOut)
@@ -732,10 +727,10 @@ function whois(hashname)
     chan.receive(packet);
   }
   
-  hn.chanDone = function(id)
+  hn.chanEnded = function(id)
   {
     if(!hn.chans[id]) return;
-    debug("channel done",id,hn.hashname);
+    debug("channel ended",id,hn.chans[id].type,hn.hashname);
     // don't leave a packet around to send from this channel
     if(hn.lastPacket && hn.lastPacket.js && hn.lastPacket.js.c == id) hn.lastPacket = false;
     hn.chans[id] = false;
@@ -1009,14 +1004,15 @@ function raw(type, arg, callback)
   chan.isOut = (chan.id % 2 == hn.chanOut % 2);
   hn.chans[chan.id] = chan;
 
-  // raw channels always timeout/expire after the last sent/received packet
-  if(!arg.timeout) arg.timeout = defaults.chan_timeout;
+  // raw channels always timeout/expire after the last received packet
   function timer()
   {
-    if(chan.ended) return;
     if(chan.timer) clearTimeout(chan.timer);
     chan.timer = setTimeout(function(){
-      chan.fail({js:{err:"timeout"}});
+      // signal incoming error if still open, restarts timer
+      if(!chan.ended) return hn.receive({js:{err:"timeout",c:chan.id}});
+      // clean up references if ended
+      hn.chanEnded(chan.id);
     }, arg.timeout);
   }
   chan.timeout = function(timeout)
@@ -1024,7 +1020,8 @@ function raw(type, arg, callback)
     arg.timeout = timeout;
     timer();
   }
-
+  chan.timeout(arg.timeout || defaults.chan_timeout);
+  
   chan.hashname = hn.hashname; // for convenience
 
   debug("new unreliable channel",hn.hashname,chan.type,chan.id);
@@ -1033,42 +1030,33 @@ function raw(type, arg, callback)
   chan.receive = function(packet)
   {
     if(!hn.chans[chan.id]) return debug("dropping receive packet to dead channel",chan.id,packet.js)
-    // if err'd or ended, delete ourselves
-    if(packet.js.err || packet.js.end) chan.fail();
-    else chan.opened = true;
+    chan.opened = true;
+    chan.ended = chan.ended || packet.js.err || packet.js.end;
     chan.recvAt = Date.now();
     chan.last = packet.sender;
-    chan.callback(packet.js.err||packet.js.end, packet, chan);
+    chan.callback(chan.ended, packet, chan);
     timer();
   }
 
   // minimal wrapper to send raw packets
   chan.send = function(packet)
   {
-    if(chan.ended || !hn.chans[chan.id]) return debug("dropping send packet to dead channel",chan.id,packet.js);
+    if(!hn.chans[chan.id]) return debug("dropping send packet to dead channel",chan.id,packet.js);
     if(!packet.js) packet.js = {};
     packet.js.c = chan.id;
-    debug("SEND",chan.type,JSON.stringify(packet.js));
+    chan.ended = chan.ended || packet.js.err || packet.js.end;
     chan.sentAt = Date.now();
+    debug("SEND",chan.type,chan.ended,JSON.stringify(packet.js));
     hn.send(packet);
-    // if err'd or ended, delete ourselves
-    if(packet.js.err || packet.js.end) chan.fail();
-    timer();
+  }
+  
+  // convenience
+  chan.end = function()
+  {
+    if(chan.ended) return;
+    chan.send({js:{end:true}});
   }
 
-  chan.fail = function(packet){
-    if(chan.ended) return; // prevent multiple calls
-    hn.chanDone(chan.id);
-    chan.ended = true;
-    if(packet)
-    {
-      packet.js.c = chan.id;
-      packet.from = hn;
-      debug("CLOSING",chan.type,JSON.stringify(packet.js));
-      if(chan.recvAt) hn.send(packet); // only error if we've ever gotten something
-      chan.callback(packet.js.err, packet, chan, function(){});
-    }
-  }
 
   // send optional initial packet with type set
   if(arg.js)
@@ -1080,7 +1068,7 @@ function raw(type, arg, callback)
     {
       var at = 1000;
       function retry(){
-        if(chan.ended || chan.recvAt) return; // means we're gone or received a packet
+        if(chan.ended || chan.opened) return; // means we're gone or received a packet
         chan.send(arg);
         if(at < 4000) at *= 2;
         arg.retry--;
@@ -1106,7 +1094,6 @@ function channel(type, arg, callback)
   }
   chan.isOut = (chan.id % 2 == hn.chanOut % 2);
   hn.chans[chan.id] = chan;
-  chan.timeout = arg.timeout || defaults.chan_timeout;
   // app originating if not bare, be friendly w/ the type, don't double-underscore if they did already
   if(!arg.bare && type.substr(0,1) !== "_") type = "_"+type;
   chan.type = type; // save for debug
@@ -1114,6 +1101,13 @@ function channel(type, arg, callback)
   chan.hashname = hn.hashname; // for convenience
 
   debug("new channel",hn.hashname,chan.type,chan.id);
+  
+  // configure default timeout, for resend
+  chan.timeout = function(timeout)
+  {
+    arg.timeout = timeout;
+  }
+  chan.timeout(arg.timeout || defaults.chan_timeout);
 
   // used by app to change how it interfaces with the channel
   chan.wrap = function(wrap)
@@ -1123,44 +1117,28 @@ function channel(type, arg, callback)
   }
 
   // called to do eventual cleanup
-  chan.done = function(){
-    if(chan.ended) return; // prevent multiple calls
-    chan.ended = true;
-    debug("channel done",chan.id);
-    hn.chanDone(chan.id);
-  };
-
-  // used to internally fail a channel, timeout or connection failure
-  chan.fail = function(packet){
-    if(chan.errored) return; // prevent multiple calls
-    chan.errored = packet;
-    packet.from = hn;
-    chan.callback(packet.js.err, packet, chan, function(){});
-    chan.done();
+  function cleanup()
+  {
+    if(chan.timer) clearTimeout(chan.timer);
+    chan.timer = setTimeout(function(){
+      chan.ended = chan.ended || true;
+      hn.chanEnded(chan.id);
+    }, arg.timeout);
   }
-
-  // simple convenience wrapper to end the channel
-  chan.end = function(){
-    chan.send({end:true});
-    chan.done();
-  };
-
-  // errors are hard-send-end
-  chan.err = function(err){
-    if(chan.errored) return;
-    chan.errored = {js:{err:err,c:chan.id}};
-    if(chan.recvAt) hn.send(chan.errored);
-    chan.done();
-  };
 
   // process packets at a raw level, handle all miss/ack tracking and ordering
   chan.receive = function(packet)
   {
     // if it's an incoming error, bail hard/fast
-    if(packet.js.err) return chan.fail(packet);
+    if(packet.js.err)
+    {
+      chan.inq = [];
+      chan.ended = packet.js.err;
+      chan.callback(packet.js.err, packet, chan, function(){});
+      cleanup();
+      return;
+    }
 
-    // in errored state, only/always reply with the error and drop
-    if(chan.errored) return chan.send(chan.errored);
     chan.recvAt = Date.now();
     chan.opened = true;
     chan.last = packet.sender;
@@ -1184,6 +1162,7 @@ function channel(type, arg, callback)
         // packet acknowleged!
         if(pold.js.seq <= ack) {
           if(pold.callback) pold.callback();
+          if(pold.js.end) cleanup();
           return;
         }
         chan.outq.push(pold);
@@ -1227,15 +1206,16 @@ function channel(type, arg, callback)
     if(!packet && chan.inq.length > 0) chan.forceAck = true;
     if(!packet) return;
     chan.handling = true;
+    chan.ended = chan.ended || packet.js.end;
     if(!chan.safe) packet.js = packet.js._ || {}; // unescape all content json
-    chan.callback(packet.js.end, packet, chan, function(ack){
-      // catch whenever it was ended to start cleanup
-      if(packet.js.end) chan.endIn = true;
-      if(chan.endOut && chan.endIn) chan.done();
+    chan.callback(chan.ended, packet, chan, function(ack){
+      // catch whenever it was ended to do cleanup
       chan.inq.shift();
       chan.inDone++;
       chan.handling = false;
       if(ack) chan.ack(); // auto-ack functionality
+      // cleanup eventually
+      if(chan.ended) cleanup();
       chan.handler();
     });
   }
@@ -1247,9 +1227,9 @@ function channel(type, arg, callback)
     if(!chan.outq.length) return;
     var lastpacket = chan.outq[chan.outq.length-1];
     // timeout force-end the channel
-    if(Date.now() - lastpacket.sentAt > chan.timeout)
+    if(Date.now() - lastpacket.sentAt > arg.timeout)
     {
-      chan.fail({js:{err:"timeout"}});
+      hn.receive({js:{err:"timeout",c:chan.id}});
       return;
     }
     debug("channel resending");
@@ -1288,20 +1268,22 @@ function channel(type, arg, callback)
     // now validate and send the packet
     packet.js.c = chan.id;
     debug("SEND",chan.type,JSON.stringify(packet.js));
+    cleanup();
     hn.send(packet);
-
-    // catch whenever it was ended to start cleanup
-    if(packet.js.end) chan.endOut = true;
-    if(chan.endOut && chan.endIn) chan.done();
   }
 
   // send content reliably
   chan.send = function(arg)
   {
-    if(chan.ended) return warn("can't send to an ended channel");
-
     // create a new packet from the arg
     if(!arg) arg = {};
+    // immediate fail errors
+    if(arg.err)
+    {
+      chan.ended = arg.err;
+      hn.send({js:{err:arg.err,c:chan.id}});
+      return cleanup();
+    }
     var packet = {};
     packet.js = chan.safe ? arg.js : {_:arg.js};
     if(arg.type) packet.js.type = arg.type;
@@ -1323,6 +1305,25 @@ function channel(type, arg, callback)
     if(chan.resender) clearTimeout(chan.resender);
     chan.resender = setTimeout(function(){chan.resend()}, defaults.chan_resend);
     return chan;
+  }
+
+  // convenience
+  chan.end = function()
+  {
+    if(chan.ended) return chan.ack();
+    chan.send({js:{end:true}});
+  }
+
+  // error immediately
+  chan.fail = function(packet)
+  {
+    if(chan.ended) return;
+    if(!packet) packet = {};
+    if(!packet.js) packet.js = {};
+    if(!packet.js.err) packet.js.err = "failed";
+    chan.ended = packet.js.err;
+    packet.js.c = chan.id;
+    hn.send(packet);
   }
 
   // send optional initial packet with type set
@@ -1383,8 +1384,8 @@ function inConnect(err, packet, chan)
 
 function relay(self, from, to, packet)
 {
-  if(from.ended && !to.ended) return to.fail({js:{err:"disconnected"}});
-  if(to.ended && !from.ended) return from.fail({js:{err:"disconnected"}});
+  if(from.ended && !to.ended) return to.send({js:{err:"disconnected"}});
+  if(to.ended && !from.ended) return from.send({js:{err:"disconnected"}});
 
   // check to see if we should set the bridge flag for line packets
   var js = {};
