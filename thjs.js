@@ -1440,6 +1440,7 @@ function inPeer(err, packet, chan)
 
   // insert all usable/safe sender paths
   packet.from.paths.forEach(function(path){
+    if(!path.lastIn) return;
     if(pathShareOrder.indexOf(path.type) == -1) return;
     if(isLocalPath(path) && !peer.isLocal) return;
     packet.js.paths.push(path.json);
