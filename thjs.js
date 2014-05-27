@@ -869,7 +869,7 @@ function whois(hashname)
       alive.push(packet.sender);
       var best = packet.sender;
       alive.forEach(function(path){
-        if(pathShareOrder.indexOf(path.type) > pathShareOrder.indexOf(path.type)) return;
+        if(pathShareOrder.indexOf(best.type) < pathShareOrder.indexOf(path.type)) return;
         if(isLocalPath(best)) return; // always prefer (the first) local paths
         best = path;
       });
