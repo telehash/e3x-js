@@ -255,7 +255,7 @@ function linkMaint(self)
     var sorted = self.buckets[bucket].sort(function(a,b){ return a.age - b.age });
     if(sorted.length) debug("link maintenance on bucket",bucket,sorted.length);
     sorted.slice(0,defaults.link_k).forEach(function(hn){
-      if(!hn.linked || !hn.alive) return;
+      if(!hn.linked || !pathValid(hn.to)) return;
       if((Date.now() - hn.linked.sentAt) < Math.ceil(defaults.link_timer/2)) return; // we sent to them recently
       hn.linked.send({js:{seed:self.seed}});
     });
@@ -287,7 +287,7 @@ function bridge(path, msg, to)
   Object.keys(self.bridges[path.type]).forEach(function(id){
     if(id == to.hashname) return; // lolz
     var hn = self.whois(id);
-    if(hn.alive) via = hn;
+    if(pathValid(hn.to)) via = hn;
   });
 
   if(!via) return debug("couldn't find a bridge host")&&false;
@@ -354,7 +354,7 @@ function online(callback)
   function done()
   {
     if(!dones) return; // already called back
-    var alive = self.seeds.filter(function(seed){return seed.alive}).length;
+    var alive = self.seeds.filter(function(seed){return pathValid(seed.to)}).length;
     if(alive)
     {
       callback(null,alive);
@@ -368,7 +368,7 @@ function online(callback)
 
   self.seeds.forEach(function(seed){
     seed.link(function(){
-      if(seed.alive) seed.pathSync();
+      if(pathValid(seed.to)) seed.pathSync();
       done();
     });
   });
@@ -632,7 +632,6 @@ function whois(hashname)
     
     // always update default to newest
     hn.to = path;
-    hn.alive = pathValid(hn.to);
 
     // always remove any relay once there's a path
     hn.relayChan = false;
@@ -654,11 +653,12 @@ function whois(hashname)
       if(packet.to) return self.send(packet.to, lined, hn);
 
       // if the send worked, we're done, if not fall through
-      if(self.send(hn.to, lined, hn)) return;
+      if(self.send(hn.to, lined, hn) && pathValid(hn.to)) return;
     }
     
     // we've fallen through, either no line, or no valid paths
-    hn.alive = hn.openAt = false;
+    hn.openAt = false;
+
     // add to queue to send on line
     if(hn.sendwait.indexOf(packet) == -1) hn.sendwait.push(packet);
 
@@ -778,7 +778,7 @@ function whois(hashname)
   {
     if(!callback) callback = function(){}
 
-    debug("LINKUP",hn.hashname);
+    debug("LINKTRY",hn.hashname);
     var js = {seed:self.seed};
     js.see = self.buckets[hn.bucket].sort(function(a,b){ return a.age - b.age }).filter(function(a){ return a.seed }).map(function(seed){ return seed.address(hn) }).slice(0,8);
     // add some distant ones if none
@@ -915,7 +915,7 @@ function seek(hn, callback)
   Object.keys(self.buckets).forEach(function(bucket){
     self.buckets[bucket].forEach(function(link){
       if(link.hashname == hn) return; // ignore the one we're (re)seeking
-      if(link.seed && link.alive) seeds.push(link);
+      if(link.seed && pathValid(link.to)) seeds.push(link);
     });
   });
   seeds.sort(function(a,b){ return dhash(hn.hashname,a.hashname) - dhash(hn.hashname,b.hashname) }).slice(0,3).forEach(function(seed){
@@ -1055,6 +1055,13 @@ function raw(type, arg, callback)
   {
     if(chan.ended) return;
     chan.send({js:{end:true}});
+  }
+
+  chan.fail = function(err)
+  {
+    if(chan.ended) return;
+    chan.ended = err || "failed";
+    hn.send({js:{err:chan.ended,c:chan.id}});
   }
 
 
@@ -1280,6 +1287,7 @@ function channel(type, arg, callback)
     // immediate fail errors
     if(arg.err)
     {
+      if(chan.ended) return;
       chan.ended = arg.err;
       hn.send({js:{err:arg.err,c:chan.id}});
       return cleanup();
@@ -1314,16 +1322,13 @@ function channel(type, arg, callback)
     chan.send({js:{end:true}});
   }
 
-  // error immediately
-  chan.fail = function(packet)
+  // send error immediately, flexible arguments
+  chan.fail = function(arg)
   {
-    if(chan.ended) return;
-    if(!packet) packet = {};
-    if(!packet.js) packet.js = {};
-    if(!packet.js.err) packet.js.err = "failed";
-    chan.ended = packet.js.err;
-    packet.js.c = chan.id;
-    hn.send(packet);
+    var err = "failed";
+    if(typeof arg == "string") err = arg;
+    if(typeof arg == "object" && arg.js && arg.js.err) err = arg.js.err;
+    chan.send({err:err});
   }
 
   // send optional initial packet with type set
@@ -1431,7 +1436,8 @@ function inPeer(err, packet, chan)
 
   if(!isHEX(packet.js.peer, 64)) return;
   var peer = self.whois(packet.js.peer);
-  if(!peer || !peer.lineIn) return; // these happen often as lines come/go, ignore dead peer requests
+  if(!peer) return;
+  if(!pathValid(peer.to)) return chan.fail("disconnected"); // these happen often as lines come/go, ignore dead peer requests
   chan.timeout(defaults.nat_timeout);
   var js = {from:packet.from.parts};
 
@@ -1506,6 +1512,7 @@ function inLink(err, packet, chan)
   chan.timeout(defaults.nat_timeout*2); // two NAT windows to be safe
 
   // add in this link
+  debug("LINKUP",packet.from.hashname);
   if(!packet.from.age) packet.from.age = Date.now();
   packet.from.linked = chan;
   packet.from.seed = packet.js.seed;
@@ -1584,13 +1591,13 @@ function inBridge(err, packet, chan)
   if(!packet.sender || !isHEX(packet.js.to,32) || !isHEX(packet.js.from,32) || typeof packet.js.path != "object") return warn("invalid bridge request",JSON.stringify(packet.js),packet.from.hashname);
 
   // must be allowed either globally or per hashname
-  if(!self.isBridge(packet.from)) return chan.send({js:{err:"not allowed"}});
+  if(!self.isBridge(packet.from)) return chan.fail("not allowed");
 
   // don't bridge for types we don't know
-  if(!self.networks[packet.js.path.type]) return chan.send({js:{err:"bad path"}});
+  if(!self.networks[packet.js.path.type]) return chan.fail("bad path");
 
   // ignore fool line ids
-  if(self.lines[packet.js.to] || self.lines[packet.js.from]) return chan.send({js:{err:"bad line"}});
+  if(self.lines[packet.js.to] || self.lines[packet.js.from]) return chan.fail("bad line");
 
   // set up the actual bridge paths
   debug("BRIDGEUP",JSON.stringify(packet.js));
