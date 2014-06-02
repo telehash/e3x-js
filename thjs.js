@@ -1295,6 +1295,7 @@ function channel(type, arg, callback)
 function inRelay(chan, packet)
 {
   var to = chan.relayTo;
+  var self = packet.from.self;
 
   // if the active relay is failing, try to create one via a bridge
   if((packet.js.err || packet.js.warn) && !chan.migrating)
@@ -1336,7 +1337,7 @@ function inRelay(chan, packet)
   
   // if the sender has created a bridge, use their path as the packet's origin!
   var path = (packet.js.bridge) ? packet.sender : false;
-  if(packet.body && packet.body.length) packet.from.self.receive(packet.body, path);
+  if(packet.body && packet.body.length) self.receive(packet.body, path);
 
   // always try a path sync to upgrade the relay
   to.pathSync();
