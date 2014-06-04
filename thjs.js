@@ -417,7 +417,6 @@ function receive(msg, path)
     var err;
     if((err = self.CSets[from.csid].delineize(from, packet))) return debug("couldn't decrypt line",err,packet.sender);
     from.linedAt = from.openAt;
-    debug("LINEIN",JSON.stringify(packet.js));
     from.active();
     from.receive(packet);
     return;
@@ -486,7 +485,8 @@ function whois(hashname)
     var match = pathMatch(path, hn.paths);
     if(match) return match;
 
-    // preserve original
+    // clone and also preserve original (hackey)
+    path = JSON.parse(JSON.stringify(path));
     if(!path.json) path.json = JSON.parse(JSON.stringify(path));
 
     debug("adding new path",hn.paths.length,JSON.stringify(path.json));
@@ -561,7 +561,11 @@ function whois(hashname)
       if(pathShareOrder.indexOf(path.type) == -1) hn.bridging = true;
 
       // track overall if we trust them as local
-      if(isLocalPath(path)) hn.isLocal = true;
+      if(isLocalPath(path) && !hn.isLocal)
+      {
+        hn.isLocal = true;
+        hn.pathSync();
+      }
     }
 
     // always update default to newest
@@ -663,6 +667,7 @@ function whois(hashname)
 
     // find any existing channel
     var chan = hn.chans[packet.js.c];
+    debug("LINEIN",chan&&chan.type,JSON.stringify(packet.js),packet.body&&packet.body.length);
     if(chan === false) return; // drop packet for a closed channel
     if(chan) return chan.receive(packet);
 
@@ -1300,7 +1305,7 @@ function inRelay(chan, packet)
   var self = packet.from.self;
 
   // if the active relay is failing, try to create one via a bridge
-  if((packet.js.err || packet.js.warn) && !chan.migrating && to.relayChan == chan)
+  if((packet.js.err || packet.js.warn) && !chan.migrating && to.relayChan == chan && !to.to)
   {
     debug("relay failing, trying to migrate",to.hashname);
     chan.migrating = true;
@@ -1337,8 +1342,8 @@ function inRelay(chan, packet)
   // most recent is always the current default back
   to.relayChan = chan;
   
-  // if the sender has created a bridge, use their path as the packet's origin!
-  var path = (packet.js.bridge) ? packet.sender : false;
+  // if the sender has created a bridge, clone their path as the packet's origin!
+  var path = (packet.js.bridge) ? JSON.parse(JSON.stringify(packet.sender.json)) : false;
   if(packet.body && packet.body.length) self.receive(packet.body, path);
 
   // always try a path sync to upgrade the relay
