@@ -49,8 +49,8 @@ exports.switch = function()
   // outgoing packets to the network
   self.deliver = function(type, callback){ self.networks[type] = callback};
   self.send = function(path, msg, to){
-    if(!msg) return debug("send called w/ no packet, dropping")&&false;
-    if(!path) return debug("send called w/ no path, dropping")&&false;
+    if(!msg) return debug("send called w/ no packet, dropping",new Error().stack)&&false;
+    if(!path) return debug("send called w/ no path, dropping",new Error().stack)&&false;
     if(!self.networks[path.type]) return false;
     if(to) path = to.pathOut(path);
     debug("<<<<",Date(),msg.length,path&&[path.type,path.ip,path.port,path.id].join(","),to&&to.hashname);
@@ -355,22 +355,26 @@ function receive(msg, path)
     // ignore incoming opens if too fast or recent duplicates
     if(open.js.line == from.lineIn)
     {
-      var age = Date.now() - from.openedAt;
+      var age = Date.now() - (from.openAcked||0);
       if((age < defaults.seek_timeout) || (age < defaults.nat_timeout && from.openDup >= 3)) return;
       from.openDup++;
     }else{
       from.openDup = 0;
     }
     
-    // always minimally flag activity and send an open ack back
+    // always minimally flag activity and send an open ack back via network or relay
+    var openAck = from.open(); // inits line crypto
     from.active();
-    self.send(from.pathIn(path),from.open(),from);
+    from.openAcked = Date.now();
+    path = from.pathIn(path);
+    if(path) self.send(path,openAck,from);
+    else if(from.relayChan) from.relayChan.send({body:openAck});
 
-    // only do new line setup once once
+    // only do new line setup once
     if(open.js.line != from.lineIn)
     {
-      debug("new line");
       from.lineIn = open.js.line;
+      debug("new line",from.lineIn,from.lineOut);
       self.CSets[open.csid].openline(from, open);
       self.lines[from.lineOut] = from;
 
@@ -406,7 +410,7 @@ function receive(msg, path)
       if(self.bridgeCache[id]) return; // drop duplicates
       self.bridgeCache[id] = true;
       // flat out raw retransmit any bridge packets
-      return self.send(self.bridgeLine[lineID],msg);
+      return self.send(self.bridgeLine[lineID],pencode(false,packet.body));
     }
 
     // decrypt and process
@@ -590,11 +594,11 @@ function whois(hashname)
     // if there's a line, try sending it via a valid network path!
     if(hn.lineIn)
     {
-      debug("line sending",hn.hashname,hn.lineIn,typeof packet);
+      debug("line sending",hn.hashname,hn.lineIn);
       var lined = self.CSets[hn.csid].lineize(hn, packet);
       hn.sentAt = Date.now();
 
-      // directed packets are preferred, just dump and done
+      // directed packets, just dump and done
       if(packet.to) return self.send(packet.to, lined, hn);
 
       // if there's a valid path to them, just use it
@@ -769,9 +773,7 @@ function whois(hashname)
   hn.open = function()
   {
     if(!hn.parts) return false; // can't open if no key
-    hn.openedAt = Date.now();
-    if(hn.opened) return hn.opened;
-    hn.opened = openize(self,hn);
+    if(!hn.opened) hn.opened = openize(self,hn);
     return hn.opened;
   }
 
@@ -996,7 +998,7 @@ function raw(type, arg, callback)
     packet.js.c = chan.id;
     chan.ended = chan.ended || packet.js.err || packet.js.end;
     chan.sentAt = Date.now();
-    debug("SEND",chan.type,chan.ended,JSON.stringify(packet.js));
+    debug("SEND",chan.type,JSON.stringify(packet.js),packet.body&&packet.body.length);
     hn.send(packet);
   }
   
@@ -1298,15 +1300,15 @@ function inRelay(chan, packet)
   var self = packet.from.self;
 
   // if the active relay is failing, try to create one via a bridge
-  if((packet.js.err || packet.js.warn) && !chan.migrating)
+  if((packet.js.err || packet.js.warn) && !chan.migrating && to.relayChan == chan)
   {
-    debug("migrating relay",to.hashname);
+    debug("relay failing, trying to migrate",to.hashname);
     chan.migrating = true;
     // try to find all bridges w/ a matching path type
     var bridges = [];
     to.paths.forEach(function(path){
       if(!self.bridges[path.type]) return;
-      self.bridges[path.type].forEach(function(id){
+      Objet.keys(self.bridges[path.type]).forEach(function(id){
         if(bridges.indexOf(id) == -1) bridges.push(id);
       });
     });
@@ -1314,7 +1316,7 @@ function inRelay(chan, packet)
     var done;
     bridges.forEach(function(id){
       if(done) return;
-      if(id == to.hashname) return; // lolz
+      if(id == to.hashname || id == packet.from.hashname) return; // lolz
       var hn = self.whois(id);
       if(!pathValid(hn.to)) return;
       // send peer request through the bridge
