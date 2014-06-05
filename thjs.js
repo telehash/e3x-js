@@ -1313,7 +1313,7 @@ function inRelay(chan, packet)
     var bridges = [];
     to.paths.forEach(function(path){
       if(!self.bridges[path.type]) return;
-      Objet.keys(self.bridges[path.type]).forEach(function(id){
+      Object.keys(self.bridges[path.type]).forEach(function(id){
         if(bridges.indexOf(id) == -1) bridges.push(id);
       });
     });
