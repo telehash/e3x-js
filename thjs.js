@@ -624,7 +624,7 @@ function whois(hashname)
     debug("alive failthrough",hn.sendSeek,Object.keys(hn.vias||{}));
 
     // always send to open all known paths to increase restart-resiliency
-    hn.paths.forEach(function(path){
+    if(hn.open()) hn.paths.forEach(function(path){
       self.send(path, hn.open(), hn);
     });
 
