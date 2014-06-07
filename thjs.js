@@ -431,7 +431,7 @@ function whokey(parts, key, keys)
   if(typeof parts != "object") return false;
   var csid = partsMatch(self.parts,parts);
   if(!csid) return false;
-  hn = self.whois(parts2hn(parts));
+  var hn = self.whois(parts2hn(parts));
   if(!hn) return false;
   if(keys) key = keys[csid]; // convenience for addSeed
   var err = loadkey(self,hn,csid,key);
@@ -1563,7 +1563,7 @@ function inPath(err, packet, chan)
   var self = packet.from.self;
 
   // add any/all suggested paths
-  if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(hn.pathGet);
+  if(Array.isArray(packet.js.paths)) packet.js.paths.forEach(function(path){packet.from.pathGet(path)});
 
   // send back on all paths
   packet.from.paths.forEach(function(path){
