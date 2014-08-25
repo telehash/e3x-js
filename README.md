@@ -27,16 +27,18 @@ The API to implement a new CS module is just a simplified crypto wrapper:
 var cs = require('e3x-csxx');
 cs.id; // 'xx';
 
-var self = new cs.Self(pair);
-self.decrypt();
+cs.generate(cb); // new local keypair, cb(err, pair)
 
-var endpoint = new cs.Endpoint(public_key_endpoint);
-endpoint.verify();
-endpoint.encrypt(self);
+var local = new cs.Local(pair);
+var inner = local.decrypt(body);
 
-var ephemeral = new cs.Ephemeral(public_key_ephemeral, endpoint);
-ephemeral.encrypt()
-ephemeral.decrypt()
+var remote = new cs.Remote(public_key_endpoint);
+var bool = remote.verify(local, body);
+var outer = remote.encrypt(local, inner);
+
+var ephemeral = new cs.Ephemeral(remote, body);
+var outer = ephemeral.encrypt(inner)
+ver inner = ephemeral.decrypt(outer)
 
 
 ```
