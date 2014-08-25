@@ -4,7 +4,9 @@
   "homepage": "https://github.com/quartzjer/e3x",
   "version": "0.0.1",
   "dependencies": {
-    "lob-enc": "~0.0.1"
+    "lob-enc": "git+https://github.com/quartzjer/lob-enc.git",
+    "hashname": "git+https://github.com/quartzjer/hashname.git",
+    "e3x-cs1a": "git+https://github.com/quartzjer/e3x-cs1a.git"
   },
   "devDependencies": {
     "chai": "*",
