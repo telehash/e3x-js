@@ -31,13 +31,53 @@ exports.self = function(args, cbDone){
   
   self.decrypt = function(message)
   {
-    return false;
+    if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
+    var csid = message.head.toString('hex');
+    if(!csets[csid]) return false;
+    var inner = csets[csid].decrypt(message.body);
+    if(!inner) return false;
+    return lob.decode(inner);
   }
 
   self.exchange = function(args, cbDone)
   {
     var x = {};
-    x.args = args;
+    if(typeof args != 'object') return cbDone('invalid args');
+    var csid = (Buffer.isBuffer(args.csid)) ? args.csid.toString('hex') : args.csid;
+    if(!csets[csid]) return cbDone('no support for cs'+csid);
+    var key = (Buffer.isBuffer(args.key)) ? args.key : base32.decode(args.key);
+    if(!key) return cbDone('invalid key');
+
+    var cs = new csets[csid].Remote(key);
+    if(cs.err) return cbDone(cs.err);
+
+    var x = {csid:csid, key:key, cs:cs};
+    x.token = new Buffer(16);
+
+    x.verify = function(message){
+      return false;
+    };
+
+    x.encrypt = function(inner){
+      return false;
+    };
+
+    x.decrypt = function(packet){
+      
+    };
+    
+    x.sync = function(handshake){
+      return true;
+    };
+
+    x.handshake = function(){
+      
+    };
+
+    x.channel = function(args, inner){
+      
+    };
+    
     cbDone(err, x);
   }
 

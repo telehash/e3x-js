@@ -27,7 +27,7 @@ e3x.self(opts,function(err,self){
     var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
     var handshake = exchange.handshake();
 
-    var channel = exchange.start(opts, inner);
+    var channel = exchange.channel(opts, open);
     var bool = channel.receive(inner); // true if accepted
     channel.send(packet); // calls exchange.sending()
     channel.state;
