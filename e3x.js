@@ -1,6 +1,32 @@
-var crypto = require("crypto");
+var crypto = require('crypto');
+var lob = require('lob-enc');
 
-exports.cs = {};
+var csets = exports.cs = {};
+
+exports.generate = function(cbDone){
+  var pairs = {};
+  Object.keys(csets).forEach(function(csid){
+    csets[csid].generate(function(err,pair){
+      if(err) return cbDone(err);
+      pairs[csid] = pair;
+      if(Object.keys(pairs).length == Object.keys(csets).length) return cbDone(null, pairs);
+    });
+  });
+}
+
+
+exports.self = function(opts, cbDone){
+  if(typeof opts != 'object' || typeof opts.pairs != 'objects') return cbDone('invald args');
+  var self = {locals:{}};
+  var err;
+  Object.keys(csets).forEach(function(csid){
+    self.locals[csid] = new csets[csid].Local(opts.pairs[csid]);
+    err = err || self.err;
+  });
+  cbDone(err, self);
+}
+
+
 
 var warn = function(){console.log.apply(console,arguments); return undefined; };
 var debug = function(){};
