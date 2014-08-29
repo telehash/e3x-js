@@ -1,5 +1,6 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
+var base32 = require('base32');
 
 var csets = exports.cs = {};
 
@@ -8,24 +9,40 @@ exports.generate = function(cbDone){
   Object.keys(csets).forEach(function(csid){
     csets[csid].generate(function(err,pair){
       if(err) return cbDone(err);
-      pairs[csid] = pair;
+      pairs[csid] = {key:base32.encode(pair.key), secret:base32.encode(pair.secret)};
       if(Object.keys(pairs).length == Object.keys(csets).length) return cbDone(null, pairs);
     });
   });
 }
 
-
-exports.self = function(opts, cbDone){
-  if(typeof opts != 'object' || typeof opts.pairs != 'objects') return cbDone('invald args');
+exports.self = function(args, cbDone){
+  if(typeof args != 'object' || typeof args.pairs != 'object') return cbDone('invald args');
   var self = {locals:{}};
+  self.args = args;
   var err;
   Object.keys(csets).forEach(function(csid){
-    self.locals[csid] = new csets[csid].Local(opts.pairs[csid]);
+    var pair = args.pairs[csid];
+    self.locals[csid] = new csets[csid].Local({
+      key:base32.decode(pair.key),
+      secret:base32.decode(pair.secret)
+    });
     err = err || self.err;
   });
+  
+  self.decrypt = function(message)
+  {
+    return false;
+  }
+
+  self.exchange = function(args, cbDone)
+  {
+    var x = {};
+    x.args = args;
+    cbDone(err, x);
+  }
+
   cbDone(err, self);
 }
-
 
 
 var warn = function(){console.log.apply(console,arguments); return undefined; };
