@@ -10,24 +10,26 @@ All packets use [lob-enc](https://github.com/quartzjer/lob-enc) structure of: `{
 ```js
 var e3x = require('e3x');
 
-e3x.cs[].generate(function(err,pair){})
+var secrets = e3x.generate();
 
 e3x.self(opts,function(err,self){
-  var packet = self.decrypt(message);
+  var inner = self.decrypt(message);
   
   self.exchange(opts,function(err,exchange){
     exchange.token; // 16 byte buffer
-    exchange.sending = function(packet){ }
-    var message = exchange.keepalive();
-    exchange.starting = function(packet){ use exchange.channel(opts,packet) to start}
+    exchange.sending = function(cpacket){ }
 
     var bool = exchange.verify(message);
-    var message = exchange.encrypt(packet);
+    var message = exchange.encrypt(inner);
+
+    var inner = exchange.decrypt(cpacket);
     
-    var bool = exchange.receive(packet);
-    
-    var channel = exchange.start(opts);
-    channel.send(packet);
+    var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
+    var handshake = exchange.handshake();
+
+    var channel = exchange.start(opts, inner);
+    var bool = channel.receive(inner); // true if accepted
+    channel.send(packet); // calls exchange.sending()
     channel.state;
     channel.receiving = function(err, packet){};
   });
