@@ -18,8 +18,10 @@ exports.self = function(args, cbDone){
   if(typeof args != 'object' || typeof args.pairs != 'object') return cbDone('invald args');
   var self = {locals:{}};
   self.args = args;
+  self.keys = {};
   var err;
   Object.keys(csets).forEach(function(csid){
+    self.keys[csid] = args.pairs[csid].key;
     self.locals[csid] = new csets[csid].Local(args.pairs[csid]);
     err = err || self.err;
   });
@@ -48,13 +50,16 @@ exports.self = function(args, cbDone){
     if(cs.err) return cbDone(cs.err);
     
     var x = {csid:csid, key:key, cs:cs, token:cs.token};
+    x.seq = Math.floor(Date.now()/1000);
 
     x.verify = function(message){
-      return false;
+      return cs.verify(self.locals[csid], message.body);
     };
 
-    x.encrypt = function(inner){
-      var body = cs.encrypt(self.locals[csid], inner);
+    x.encrypt = function(inner, seq){
+      // if not set, increment our own sequence
+      if(!seq) seq = ++x.seq;
+      var body = cs.encrypt(self.locals[csid], inner, seq);
       if(!body) return false;
       return lob.encode(csid1,body);
     };
@@ -71,16 +76,24 @@ exports.self = function(args, cbDone){
       var session = new csets[csid].Ephemeral(cs, handshake.body);
       if(session.err) return true;
       x.session = session;
-      return false;
+      var seq = handshake.body.readUInt32BE(0);
+      // if it's not the same at all, send new handshake
+      var ret = (seq != x.seq) ? true : false;
+      // keep theirs if it's newer
+      if(seq > x.seq) x.seq = seq;
+      return ret;
     };
 
     x.handshake = function(js){
-      var inner = lob.encode(js,key);
-      return x.encrypt(inner);
+      var inner = lob.encode(js,self.keys[csid]);
+      var handshake = x.encrypt(inner,x.seq);
+      return handshake;
     };
 
-    x.channel = function(args, inner){
-      var chan = {state:'opening'};
+    x.channel = function(open){
+      if(!x.session) return false;
+
+      var chan = {state:'opening', open:open};
       chan.receive = function(inner){
         return false;
       };
