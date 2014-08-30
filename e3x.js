@@ -29,7 +29,7 @@ exports.self = function(args, cbDone){
     if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
     var csid = message.head.toString('hex');
     if(!csets[csid]) return false;
-    var inner = csets[csid].decrypt(message.body);
+    var inner = self.locals[csid].decrypt(message.body);
     if(!inner) return false;
     return lob.decode(inner);
   }
@@ -46,7 +46,7 @@ exports.self = function(args, cbDone){
 
     var cs = new csets[csid].Remote(key);
     if(cs.err) return cbDone(cs.err);
-
+    
     var x = {csid:csid, key:key, cs:cs, token:cs.token};
 
     x.verify = function(message){
@@ -60,11 +60,18 @@ exports.self = function(args, cbDone){
     };
 
     x.decrypt = function(packet){
-      
+      if(typeof packet != 'object' || !Buffer.isBuffer(packet.body) || message.head.length !== 0) return false;
+      if(!x.session) return false;
+      var inner = x.session.decrypt(message.body.slice(16));
+      if(!inner) return false;
+      return lob.decode(inner);
     };
     
     x.sync = function(handshake){
-      return true;
+      var session = new csets[csid].Ephemeral(cs, handshake.body);
+      if(session.err) return true;
+      x.session = session;
+      return false;
     };
 
     x.handshake = function(js){
