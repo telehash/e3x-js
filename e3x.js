@@ -50,15 +50,23 @@ exports.self = function(args, cbDone){
     if(cs.err) return cbDone(cs.err);
     
     var x = {csid:csid, key:key, cs:cs, token:cs.token};
+    // get our sort order by compairing the endpoint keys
+    x.order = (bufsort(self.keys[csid],key) == key) ? 2 : 1;
+    // generate a starting seq value that is unique
     x.seq = Math.floor(Date.now()/1000);
+    if(x.seq % 2 === 0 && x.order != 2) x.seq++;
 
     x.verify = function(message){
       return cs.verify(self.locals[csid], message.body);
     };
 
     x.encrypt = function(inner, seq){
-      // if not set, increment our own sequence
-      if(!seq) seq = ++x.seq;
+      // increment our own seq if no override given
+      if(!seq)
+      {
+        x.seq += 2;
+        seq = x.seq;
+      }
       var body = cs.encrypt(self.locals[csid], inner, seq);
       if(!body) return false;
       return lob.encode(csid1,body);
@@ -73,20 +81,31 @@ exports.self = function(args, cbDone){
     };
     
     x.sync = function(handshake){
-      var session = new csets[csid].Ephemeral(cs, handshake.body);
-      if(session.err) return true;
-      x.session = session;
+      // verify incoming seq
       var seq = handshake.body.readUInt32BE(0);
-      // if it's not the same at all, send new handshake
-      var ret = (seq != x.seq) ? true : false;
-      // keep theirs if it's newer
-      if(seq > x.seq) x.seq = seq;
-      return ret;
+      if(seq % 2 === 0 && x.order == 2) return x.seq; // invalid! send handshake
+
+      // create session
+      var session = new csets[csid].Ephemeral(cs, handshake.body);
+      if(session.err) return x.seq;
+      x.session = session;
+
+      // don't send a handshake if it's an ack
+      if(seq == x.seq) return 0;
+      
+      // send ours if higher
+      if(x.seq > seq) return x.seq;
+      
+      // set our next one to be higher
+      x.seq = seq + 1;
+
+      // ack theirs
+      return seq;
     };
 
-    x.handshake = function(js){
+    x.handshake = function(js, seq){
       var inner = lob.encode(js,self.keys[csid]);
-      var handshake = x.encrypt(inner,x.seq);
+      var handshake = x.encrypt(inner,seq);
       return handshake;
     };
 
@@ -109,6 +128,15 @@ exports.self = function(args, cbDone){
   cbDone(err, self);
 }
 
+function bufsort(a,b)
+{
+  for(var i=0;i<a.length;i++)
+  {
+    if(a[i] > b[i]) return a;
+    if(b[i] > a[i]) return b;
+  }
+  return a;
+}
 
 var warn = function(){console.log.apply(console,arguments); return undefined; };
 var debug = function(){};

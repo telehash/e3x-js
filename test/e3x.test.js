@@ -23,8 +23,8 @@ describe('e3x', function(){
   // fixtures
   var pairsA = {"1a":h2b({"key":"03a3c4c9f6e081706be52903c75e077f0f3264eda1","secret":"12d2af807dd9cf8e3f99df395fac08dede4de913"})};
   var pairsB = {"1a":h2b({"key":"03fef52613c4dad0614d92cb7331d3e64658e0b8ba","secret":"a1e95d6a1bb247183b2f52f97c174a9fb39905d9"})};
-  var handshakeAB = lob.decode(new Buffer('00011a5401ec3e03fec3400c6fd061d7f2c4874b9272831039391747b1f5dfe1bd92bc229fc41aa4141407587dab89d30efef9984daeda','hex'));
-  var handshakeBA = lob.decode(new Buffer('00011a5401ec3e021c72bdc4b892e5185c77176e39711b4ff566ff09947240a80a67826e7c4cdaec25ba8b0b61284238b3658f5f0d95b0','hex'));
+  var handshakeAB = lob.decode(new Buffer('00011a5402002d03ad284810d9a0ce5194b8ead5e08a43e84c84b1a8aa13724c52660c34ad7e977b158b24b26571b53ed5dd6babe0d632','hex'));
+  var handshakeBA = lob.decode(new Buffer('00011a5402002d031b53524a276381f39453e441fd4f576b9b851b2a7c9c38fbd0a1221c9ef13255895013fb77f2609574f78f3d79e07b','hex'));
 
   it('should export an object', function(){
     expect(e3x).to.be.a('object');
@@ -64,6 +64,7 @@ describe('e3x', function(){
         expect(x.decrypt).to.be.a('function');
         expect(x.channel).to.be.a('function');
         expect(x.token.length).to.be.equal(16);
+        expect(x.order).to.be.equal(2);
         done();
       });
     });
@@ -126,7 +127,7 @@ describe('e3x', function(){
       var inner = self.decrypt(handshakeAB);
       self.exchange({csid:'1a',key:inner.body}, function(err, x){
         var bool = x.sync(handshakeAB);
-        expect(bool).to.be.equal(true);
+        expect(bool).to.be.above(0);
         done();
       });
     });
@@ -136,9 +137,9 @@ describe('e3x', function(){
     e3x.self({pairs:pairsB}, function(err,self){
       var inner = self.decrypt(handshakeAB);
       self.exchange({csid:'1a',key:inner.body}, function(err, x){
-        x.seq = 1409412158; // jack this so that it accepts the handshake
+        x.seq = 1409417261; // force this so that it tests accepting the handshake
         var bool = x.sync(handshakeAB);
-        expect(bool).to.be.equal(false);
+        expect(bool).to.be.equal(0);
         done();
       });
     });
