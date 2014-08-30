@@ -1,6 +1,5 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
-var base32 = require('base32');
 
 var csets = exports.cs = {};
 
@@ -9,7 +8,7 @@ exports.generate = function(cbDone){
   Object.keys(csets).forEach(function(csid){
     csets[csid].generate(function(err,pair){
       if(err) return cbDone(err);
-      pairs[csid] = {key:base32.encode(pair.key), secret:base32.encode(pair.secret)};
+      pairs[csid] = pair;
       if(Object.keys(pairs).length == Object.keys(csets).length) return cbDone(null, pairs);
     });
   });
@@ -21,11 +20,7 @@ exports.self = function(args, cbDone){
   self.args = args;
   var err;
   Object.keys(csets).forEach(function(csid){
-    var pair = args.pairs[csid];
-    self.locals[csid] = new csets[csid].Local({
-      key:base32.decode(pair.key),
-      secret:base32.decode(pair.secret)
-    });
+    self.locals[csid] = new csets[csid].Local(args.pairs[csid]);
     err = err || self.err;
   });
   
@@ -44,22 +39,24 @@ exports.self = function(args, cbDone){
     var x = {};
     if(typeof args != 'object') return cbDone('invalid args');
     var csid = (Buffer.isBuffer(args.csid)) ? args.csid.toString('hex') : args.csid;
+    var csid1 = new Buffer(csid,'hex');
     if(!csets[csid]) return cbDone('no support for cs'+csid);
-    var key = (Buffer.isBuffer(args.key)) ? args.key : base32.decode(args.key);
+    var key = args.key;
     if(!key) return cbDone('invalid key');
 
     var cs = new csets[csid].Remote(key);
     if(cs.err) return cbDone(cs.err);
 
-    var x = {csid:csid, key:key, cs:cs};
-    x.token = new Buffer(16);
+    var x = {csid:csid, key:key, cs:cs, token:cs.token};
 
     x.verify = function(message){
       return false;
     };
 
     x.encrypt = function(inner){
-      return false;
+      var body = cs.encrypt(self.locals[csid], inner);
+      if(!body) return false;
+      return lob.encode(csid1,body);
     };
 
     x.decrypt = function(packet){
@@ -70,15 +67,23 @@ exports.self = function(args, cbDone){
       return true;
     };
 
-    x.handshake = function(){
-      
+    x.handshake = function(js){
+      var inner = lob.encode(js,key);
+      return x.encrypt(inner);
     };
 
     x.channel = function(args, inner){
-      
+      var chan = {state:'opening'};
+      chan.receive = function(inner){
+        return false;
+      };
+      chan.send = function(packet){
+        
+      };
+      return chan;
     };
     
-    cbDone(err, x);
+    cbDone(null, x);
   }
 
   cbDone(err, self);

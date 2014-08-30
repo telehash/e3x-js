@@ -17,7 +17,7 @@ e3x.self(opts,function(err,self){
   
   self.exchange(opts,function(err,exchange){
     exchange.token; // 16 byte buffer
-    exchange.sending = function(cpacket){ }
+    exchange.sending = function(buffer){ }
 
     var bool = exchange.verify(message);
     var message = exchange.encrypt(inner);
@@ -25,7 +25,7 @@ e3x.self(opts,function(err,self){
     var inner = exchange.decrypt(cpacket);
     
     var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
-    var handshake = exchange.handshake();
+    var buffer = exchange.handshake();
 
     var channel = exchange.channel(opts, open);
     var bool = channel.receive(inner); // true if accepted
