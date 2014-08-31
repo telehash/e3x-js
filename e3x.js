@@ -1,6 +1,13 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
 
+var defaults = exports.defaults = {};
+defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
+defaults.chan_autoack = 1000; // is how often we auto ack if the app isn't generating responses in a durable channel
+defaults.chan_resend = 2000; // resend the last packet after this long if it wasn't acked in a durable channel
+defaults.chan_outbuf = 100; // max size of outgoing buffer before applying backpressure
+defaults.chan_inbuf = 50; // how many incoming packets to cache during processing/misses
+
 var csets = exports.cs = {};
 
 exports.generate = function(cbDone){
@@ -56,6 +63,16 @@ exports.self = function(args, cbDone){
     x.seq = Math.floor(Date.now()/1000);
     if(x.seq % 2 === 0 && x.order != 2) x.seq++;
 
+    // set the channel id base and increment properly to be unique
+    x.channels = {};
+    var cid = x.order;
+    x.cid = function(){
+      var ret = cid;
+      cid += 2;
+      return ret;
+    };
+
+
     x.verify = function(message){
       return cs.verify(self.locals[csid], message.body);
     };
@@ -108,21 +125,260 @@ exports.self = function(args, cbDone){
       var handshake = x.encrypt(inner,seq);
       return handshake;
     };
-
+    
     x.channel = function(open){
-      if(!x.session) return false;
+      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.c != 'number') return false;
 
       var chan = {state:'opening', open:open};
+      // reliable setup
+      if(open.json.seq === 0)
+      {
+        chan.reliable = true;
+        chan.inq = []; // to order incoming packets for the app
+        chan.outq = []; // to keep sent ones until ack'd
+        chan.outSeq = 0; // to set outgoing json.seq
+        chan.inDone = -1; // highest incoming json.seq that has been done
+        chan.outConfirmed = -1; // highest outgoing json.seq that has been ack'd
+        chan.lastAck = -1; // last json.ack that we've sent
+      }else{
+        chan.reliable = false;
+      }
+      chan.type = open.json.type;
+      chan.id = open.json.c;
+      chan.startAt = Date.now();
+      chan.isOut = (chan.id % 2 == x.order % 2);
+      x.channels[chan.id] = chan; // track all active channels to route incoming packets
+
       chan.receive = function(inner){
         return false;
       };
+      
       chan.send = function(packet){
         
       };
+
+      // configure default timeout, for resend
+      chan.timeout = defaults.chan_timeout;
+      chan.retimeout = function(timeout)
+      {
+        chan.timeout = timeout;
+        // TODO reset any active timer
+      }
+
+      // called to do eventual cleanup
+      function cleanup()
+      {
+        if(chan.timer) clearTimeout(chan.timer);
+        chan.timer = setTimeout(function(){
+          chan.state = "gone"; // in case an app has a reference
+          x.channels[chan.id] = {state:"gone"}; // remove our reference for gc
+        }, chan.timeout);
+      }
+
       return chan;
+
+      // process packets at a raw level, handle all miss/ack tracking and ordering
+      chan.receive = function(packet)
+      {
+        // if it's an incoming error, bail hard/fast
+        if(packet.js.err)
+        {
+          chan.inq = [];
+          chan.ended = packet.js.err;
+          chan.callback(packet.js.err, packet, chan, function(){});
+          cleanup();
+          return;
+        }
+
+        chan.recvAt = Date.now();
+        chan.opened = true;
+        chan.last = packet.sender;
+
+        // process any valid newer incoming ack/miss
+        var ack = parseInt(packet.js.ack);
+        if(ack > chan.outSeq) return warn("bad ack, dropping entirely",chan.outSeq,ack);
+        var miss = Array.isArray(packet.js.miss) ? packet.js.miss : [];
+        if(miss.length > 100) {
+          warn("too many misses", miss.length, chan.id, packet.from.hashname);
+          miss = miss.slice(0,100);
+        }
+        if(miss.length > 0 || ack > chan.lastAck)
+        {
+          debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
+          chan.lastAck = ack;
+          // rebuild outq, only keeping newer packets, resending any misses
+          var outq = chan.outq;
+          chan.outq = [];
+          outq.forEach(function(pold){
+            // packet acknowleged!
+            if(pold.js.seq <= ack) {
+              if(pold.callback) pold.callback();
+              if(pold.js.end) cleanup();
+              return;
+            }
+            chan.outq.push(pold);
+            if(miss.indexOf(pold.js.seq) == -1) return;
+            // resend misses but not too frequently
+            if(Date.now() - pold.resentAt < 1000) return;
+            pold.resentAt = Date.now();
+            chan.ack(pold);
+          });
+        }
+
+        // don't process packets w/o a seq, no batteries included
+        var seq = packet.js.seq;
+        if(!(seq >= 0)) return;
+
+        // auto trigger an ack in case none were sent
+        if(!chan.acker) chan.acker = setTimeout(function(){ delete chan.acker; chan.ack();}, defaults.chan_autoack);
+
+        // drop duplicate packets, always force an ack
+        if(seq <= chan.inDone || chan.inq[seq-(chan.inDone+1)]) return chan.forceAck = true;
+
+        // drop if too far ahead, must ack
+        if(seq-chan.inDone > defaults.chan_inbuf)
+        {
+          warn("chan too far behind, dropping", seq, chan.inDone, chan.id, packet.from.hashname);
+          return chan.forceAck = true;
+        }
+
+        // stash this seq and process any in sequence, adjust for yacht-based array indicies
+        chan.inq[seq-(chan.inDone+1)] = packet;
+        debug("INQ",Object.keys(chan.inq),chan.inDone,chan.handling);
+        chan.handler();
+      }
+
+      // wrapper to deliver packets in series
+      chan.handler = function()
+      {
+        if(chan.handling) return;
+        var packet = chan.inq[0];
+        // always force an ack when there's misses yet
+        if(!packet && chan.inq.length > 0) chan.forceAck = true;
+        if(!packet) return;
+        chan.handling = true;
+        chan.ended = chan.ended || packet.js.end;
+        if(!chan.safe) packet.js = packet.js._ || {}; // unescape all content json
+        chan.callback(chan.ended, packet, chan, function(ack){
+          // catch whenever it was ended to do cleanup
+          chan.inq.shift();
+          chan.inDone++;
+          chan.handling = false;
+          if(ack) chan.ack(); // auto-ack functionality
+          // cleanup eventually
+          if(chan.ended) cleanup();
+          chan.handler();
+        });
+      }
+
+      // resend the last sent packet if it wasn't acked
+      chan.resend = function()
+      {
+        if(chan.ended) return;
+        if(!chan.outq.length) return;
+        var lastpacket = chan.outq[chan.outq.length-1];
+        // timeout force-end the channel
+        if(Date.now() - lastpacket.sentAt > arg.timeout)
+        {
+          hn.receive({js:{err:"timeout",c:chan.id}});
+          return;
+        }
+        debug("channel resending");
+        chan.ack(lastpacket);
+        setTimeout(function(){chan.resend()}, defaults.chan_resend); // recurse until chan_timeout
+      }
+
+      // add/create ack/miss values and send
+      chan.ack = function(packet)
+      {
+        if(!packet) debug("ACK CHECK",chan.id,chan.outConfirmed,chan.inDone);
+
+        // these are just empty "ack" requests
+        if(!packet)
+        {
+          // drop if no reason to ack so calling .ack() harmless when already ack'd
+          if(!chan.forceAck && chan.outConfirmed == chan.inDone) return;
+          packet = {js:{}};
+        }
+        chan.forceAck = false;
+
+        // confirm only what's been processed
+        if(chan.inDone >= 0) chan.outConfirmed = packet.js.ack = chan.inDone;
+
+        // calculate misses, if any
+        delete packet.js.miss; // when resending packets, make sure no old info slips through
+        if(chan.inq.length > 0)
+        {
+          packet.js.miss = [];
+          for(var i = 0; i < chan.inq.length; i++)
+          {
+            if(!chan.inq[i]) packet.js.miss.push(chan.inDone+i+1);
+          }
+        }
+
+        // now validate and send the packet
+        packet.js.c = chan.id;
+        debug("SEND",chan.type,JSON.stringify(packet.js));
+        cleanup();
+        hn.send(packet);
+      }
+
+      // send content reliably
+      chan.send = function(arg)
+      {
+        // create a new packet from the arg
+        if(!arg) arg = {};
+        // immediate fail errors
+        if(arg.err)
+        {
+          if(chan.ended) return;
+          chan.ended = arg.err;
+          hn.send({js:{err:arg.err,c:chan.id}});
+          return cleanup();
+        }
+        var packet = {};
+        packet.js = chan.safe ? arg.js : {_:arg.js};
+        if(arg.type) packet.js.type = arg.type;
+        if(arg.end) packet.js.end = arg.end;
+        packet.body = arg.body;
+        packet.callback = arg.callback;
+
+        // do durable stuff
+        packet.js.seq = chan.outSeq++;
+
+        // reset/update tracking stats
+        packet.sentAt = Date.now();
+        chan.outq.push(packet);
+
+        // add optional ack/miss and send
+        chan.ack(packet);
+
+        // to auto-resend if it isn't acked
+        if(chan.resender) clearTimeout(chan.resender);
+        chan.resender = setTimeout(function(){chan.resend()}, defaults.chan_resend);
+        return chan;
+      }
+
+      // convenience
+      chan.end = function()
+      {
+        if(chan.ended) return chan.ack();
+        chan.send({js:{end:true}});
+      }
+
+      // send error immediately, flexible arguments
+      chan.fail = function(arg)
+      {
+        var err = "failed";
+        if(typeof arg == "string") err = arg;
+        if(typeof arg == "object" && arg.js && arg.js.err) err = arg.js.err;
+        chan.send({err:err});
+      }
+
     };
     
     cbDone(null, x);
+
   }
 
   cbDone(err, self);

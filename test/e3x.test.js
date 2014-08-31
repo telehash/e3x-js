@@ -74,7 +74,7 @@ describe('e3x', function(){
     e3x.self({pairs:pairsA}, function(err,self){
       self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
         var handshake = x.handshake();
-        console.log('handshakeAB',handshake.toString('hex'));
+//        console.log('handshakeAB',handshake.toString('hex'));
         expect(handshake).to.be.an('object');
         expect(handshake.length).to.be.equal(55);
         done();
@@ -86,7 +86,7 @@ describe('e3x', function(){
     e3x.self({pairs:pairsB}, function(err,self){
       self.exchange({csid:'1a',key:pairsA['1a'].key}, function(err, x){
         var handshake = x.handshake();
-        console.log('handshakeBA',handshake.toString('hex'));
+//        console.log('handshakeBA',handshake.toString('hex'));
         expect(handshake).to.be.an('object');
         expect(handshake.length).to.be.equal(55);
         done();
@@ -145,14 +145,30 @@ describe('e3x', function(){
     });
   });
 
-  it('creates a channel', function(done){
+  it('creates an unreliable channel', function(done){
     e3x.self({pairs:pairsA}, function(err,self){
       self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
         x.sync(handshakeBA);
-        var c = x.channel({});
+        var cid = x.cid();
+        expect(cid).to.be.above(0);
+        var c = x.channel({json:{c:cid}});
         expect(c).to.be.an('object');
+        expect(c.reliable).to.be.equal(false);
         expect(c.send).to.be.a('function');
         expect(c.state).to.be.equal('opening')
+        expect(x.channels[c.id]).to.exist;
+        done();
+      });
+    });
+  });
+
+  it('creates a reliable channel', function(done){
+    e3x.self({pairs:pairsA}, function(err,self){
+      self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
+        x.sync(handshakeBA);
+        var c = x.channel({json:{c:x.cid(),seq:0}});
+        expect(c.reliable).to.be.equal(true);
+        expect(x.channels[c.id]).to.exist;
         done();
       });
     });
