@@ -100,6 +100,12 @@ exports.self = function(args, cbDone){
       return lob.decode(inner);
     };
     
+    x.send = function(inner){
+      if(!x.sending) return debug('send with no sending handler',inner,x.id);
+      if(!x.session) return debug('send with no session',inner,x.id);
+      x.sending(x.session.encrypt(lob.encode(inner)));
+    };
+
     x.sync = function(handshake){
       // verify incoming seq
       var seq = handshake.body.readUInt32BE(0);
@@ -278,7 +284,7 @@ exports.self = function(args, cbDone){
         // unreliable just send straight away
         if(!chan.reliable)
         {
-          // 
+          return x.send(packet);
         }
 
         // do reliable tracking
