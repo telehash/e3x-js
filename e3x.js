@@ -263,7 +263,38 @@ exports.self = function(args, cbDone){
       }
 
       chan.send = function(packet){
-        
+        if(typeof packet != 'object' || typeof packet.json != 'object') return debug('invalid send packet',packet);
+        packet.json.c = chan.id;
+
+        // immediate fail errors
+        if(packet.json.err)
+        {
+          if(chan.err) return; // don't double-error
+          chan.err = packet.json.err;
+          // x.send(packet);
+          return cleanup();
+        }
+
+        // unreliable just send straight away
+        if(!chan.reliable)
+        {
+          // 
+        }
+
+        // do reliable tracking
+        packet.json.seq = chan.outSeq++;
+
+        // reset/update tracking stats
+        packet.sentAt = Date.now();
+        chan.outq.push(packet);
+
+        // add optional ack/miss and send
+        chan.ack(packet);
+
+        // to auto-resend if it isn't acked
+        if(chan.resender) clearTimeout(chan.resender);
+        chan.resender = setTimeout(function(){chan.resend()}, defaults.chan_resend);
+        return chan;
       };
 
       // configure default timeout, for resend
@@ -326,49 +357,6 @@ exports.self = function(args, cbDone){
         debug("SEND",chan.type,JSON.stringify(packet.js));
         cleanup();
         hn.send(packet);
-      }
-
-      // send content reliably
-      chan.send = function(arg)
-      {
-        // create a new packet from the arg
-        if(!arg) arg = {};
-        // immediate fail errors
-        if(arg.err)
-        {
-          if(chan.ended) return;
-          chan.ended = arg.err;
-          hn.send({js:{err:arg.err,c:chan.id}});
-          return cleanup();
-        }
-        var packet = {};
-        packet.js = chan.safe ? arg.js : {_:arg.js};
-        if(arg.type) packet.js.type = arg.type;
-        if(arg.end) packet.js.end = arg.end;
-        packet.body = arg.body;
-        packet.callback = arg.callback;
-
-        // do durable stuff
-        packet.js.seq = chan.outSeq++;
-
-        // reset/update tracking stats
-        packet.sentAt = Date.now();
-        chan.outq.push(packet);
-
-        // add optional ack/miss and send
-        chan.ack(packet);
-
-        // to auto-resend if it isn't acked
-        if(chan.resender) clearTimeout(chan.resender);
-        chan.resender = setTimeout(function(){chan.resend()}, defaults.chan_resend);
-        return chan;
-      }
-
-      // convenience
-      chan.end = function()
-      {
-        if(chan.ended) return chan.ack();
-        chan.send({js:{end:true}});
       }
 
       // send error immediately, flexible arguments
