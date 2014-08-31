@@ -33,6 +33,9 @@ exports.self = function(args, cbDone){
     err = err || self.err;
   });
   
+  // utilities
+  self.debug = function(){console.log.apply(console, arguments);};
+
   self.decrypt = function(message)
   {
     if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
@@ -45,7 +48,6 @@ exports.self = function(args, cbDone){
 
   self.exchange = function(args, cbDone)
   {
-    var x = {};
     if(typeof args != 'object') return cbDone('invalid args');
     var csid = (Buffer.isBuffer(args.csid)) ? args.csid.toString('hex') : args.csid;
     var csid1 = new Buffer(csid,'hex');
@@ -57,6 +59,7 @@ exports.self = function(args, cbDone){
     if(cs.err) return cbDone(cs.err);
     
     var x = {csid:csid, key:key, cs:cs, token:cs.token};
+    x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
     // get our sort order by compairing the endpoint keys
     x.order = (bufsort(self.keys[csid],key) == key) ? 2 : 1;
     // generate a starting seq value that is unique
@@ -134,25 +137,131 @@ exports.self = function(args, cbDone){
       if(open.json.seq === 0)
       {
         chan.reliable = true;
-        chan.inq = []; // to order incoming packets for the app
         chan.outq = []; // to keep sent ones until ack'd
         chan.outSeq = 0; // to set outgoing json.seq
-        chan.inDone = -1; // highest incoming json.seq that has been done
         chan.outConfirmed = -1; // highest outgoing json.seq that has been ack'd
         chan.lastAck = -1; // last json.ack that we've sent
       }else{
         chan.reliable = false;
       }
+      chan.inq = []; // to order incoming packets for the app
+      chan.inDone = -1; // highest incoming json.seq that has been done
       chan.type = open.json.type;
       chan.id = open.json.c;
       chan.startAt = Date.now();
       chan.isOut = (chan.id % 2 == x.order % 2);
       x.channels[chan.id] = chan; // track all active channels to route incoming packets
 
-      chan.receive = function(inner){
-        return false;
-      };
-      
+      // called to do eventual cleanup
+      function cleanup()
+      {
+        if(chan.timer) clearTimeout(chan.timer);
+        chan.timer = setTimeout(function(){
+          chan.state = "gone"; // in case an app has a reference
+          x.channels[chan.id] = {state:"gone"}; // remove our reference for gc
+        }, chan.timeout);
+      }
+
+      // wrapper to deliver packets in series
+      var delivering = false;
+      function deliver()
+      {
+        if(delivering) return; // one at a time
+        if(!chan.receiving) return; // requires somewhere to deliver to
+        if(chan.state != "open") return; // paranoid
+        var packet = chan.inq[0];
+        // always force an ack when there's misses yet
+        if(!packet && chan.inq.length > 0) chan.forceAck = true;
+        if(!packet) return;
+        delivering = true;
+        // handle incoming ended, eventual cleanup
+        if(packet.json.end === true){
+          chan.state = "ended";
+          cleanup();
+        }
+        chan.receiving(null, packet, function(err){
+          if(err) return chan.fail(err);
+          chan.inq.shift();
+          chan.inDone++;
+          chan.ack(); // auto-ack
+          delivering = false;
+          deliver(); // iterate
+        });
+      }
+
+      // process packets at a raw level, handle all miss/ack tracking and ordering
+      chan.receive = function(packet)
+      {
+        // if it's an incoming error, bail hard/fast
+        if(packet.json.err)
+        {
+          chan.inq = [];
+          chan.err = packet.json.err;
+          if(chan.receiving) chan.receiving(chan.err, packet);
+          return cleanup();
+        }
+
+        chan.recvAt = Date.now();
+        if(chan.state == "opening") chan.state = "open";
+
+        // unreliable is easy
+        if(!chan.reliable)
+        {
+          chan.inq.push(packet);
+          return deliver();
+        }
+
+        // process any valid newer incoming ack/miss
+        var ack = parseInt(packet.json.ack);
+        if(ack > chan.outSeq) return debug("bad ack, dropping entirely",chan.outSeq,ack);
+        var miss = Array.isArray(packet.json.miss) ? packet.json.miss : [];
+        if(miss.length > 100) {
+          debug("too many misses", miss.length, chan.id, x.id);
+          miss = miss.slice(0,100);
+        }
+        if(miss.length > 0 || ack > chan.lastAck)
+        {
+          debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
+          chan.lastAck = ack;
+          // rebuild outq, only keeping newer packets, resending any misses
+          var outq = chan.outq;
+          chan.outq = [];
+          outq.forEach(function(pold){
+            // packet acknowleged!
+            if(pold.json.seq <= ack) {
+              if(pold.callback) pold.callback();
+              if(pold.json.end) cleanup();
+              return;
+            }
+            chan.outq.push(pold);
+            if(miss.indexOf(pold.json.seq) == -1) return;
+            // resend misses but not too frequently
+            if(Date.now() - pold.resentAt < 1000) return;
+            pold.resentAt = Date.now();
+            chan.ack(pold);
+          });
+        }
+
+        // don't process packets w/o a seq, no batteries included
+        var seq = packet.json.seq;
+        if(!(seq >= 0)) return;
+
+        // drop duplicate packets, always force an ack
+        if(seq <= chan.inDone || chan.inq[seq-(chan.inDone+1)]) return chan.forceAck = true;
+
+        // drop if too far ahead, must ack
+        if(seq-chan.inDone > defaults.chan_inbuf)
+        {
+          debug("chan too far behind, dropping", seq, chan.inDone, chan.id, x.id);
+          return chan.forceAck = true;
+        }
+
+        // stash this seq and process any in sequence, adjust for yacht-based array indicies
+        chan.inq[seq-(chan.inDone+1)] = packet;
+        debug("INQ",Object.keys(chan.inq),chan.inDone);
+        deliver();
+      }
+
       chan.send = function(packet){
         
       };
@@ -165,111 +274,7 @@ exports.self = function(args, cbDone){
         // TODO reset any active timer
       }
 
-      // called to do eventual cleanup
-      function cleanup()
-      {
-        if(chan.timer) clearTimeout(chan.timer);
-        chan.timer = setTimeout(function(){
-          chan.state = "gone"; // in case an app has a reference
-          x.channels[chan.id] = {state:"gone"}; // remove our reference for gc
-        }, chan.timeout);
-      }
-
       return chan;
-
-      // process packets at a raw level, handle all miss/ack tracking and ordering
-      chan.receive = function(packet)
-      {
-        // if it's an incoming error, bail hard/fast
-        if(packet.js.err)
-        {
-          chan.inq = [];
-          chan.ended = packet.js.err;
-          chan.callback(packet.js.err, packet, chan, function(){});
-          cleanup();
-          return;
-        }
-
-        chan.recvAt = Date.now();
-        chan.opened = true;
-        chan.last = packet.sender;
-
-        // process any valid newer incoming ack/miss
-        var ack = parseInt(packet.js.ack);
-        if(ack > chan.outSeq) return warn("bad ack, dropping entirely",chan.outSeq,ack);
-        var miss = Array.isArray(packet.js.miss) ? packet.js.miss : [];
-        if(miss.length > 100) {
-          warn("too many misses", miss.length, chan.id, packet.from.hashname);
-          miss = miss.slice(0,100);
-        }
-        if(miss.length > 0 || ack > chan.lastAck)
-        {
-          debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
-          chan.lastAck = ack;
-          // rebuild outq, only keeping newer packets, resending any misses
-          var outq = chan.outq;
-          chan.outq = [];
-          outq.forEach(function(pold){
-            // packet acknowleged!
-            if(pold.js.seq <= ack) {
-              if(pold.callback) pold.callback();
-              if(pold.js.end) cleanup();
-              return;
-            }
-            chan.outq.push(pold);
-            if(miss.indexOf(pold.js.seq) == -1) return;
-            // resend misses but not too frequently
-            if(Date.now() - pold.resentAt < 1000) return;
-            pold.resentAt = Date.now();
-            chan.ack(pold);
-          });
-        }
-
-        // don't process packets w/o a seq, no batteries included
-        var seq = packet.js.seq;
-        if(!(seq >= 0)) return;
-
-        // auto trigger an ack in case none were sent
-        if(!chan.acker) chan.acker = setTimeout(function(){ delete chan.acker; chan.ack();}, defaults.chan_autoack);
-
-        // drop duplicate packets, always force an ack
-        if(seq <= chan.inDone || chan.inq[seq-(chan.inDone+1)]) return chan.forceAck = true;
-
-        // drop if too far ahead, must ack
-        if(seq-chan.inDone > defaults.chan_inbuf)
-        {
-          warn("chan too far behind, dropping", seq, chan.inDone, chan.id, packet.from.hashname);
-          return chan.forceAck = true;
-        }
-
-        // stash this seq and process any in sequence, adjust for yacht-based array indicies
-        chan.inq[seq-(chan.inDone+1)] = packet;
-        debug("INQ",Object.keys(chan.inq),chan.inDone,chan.handling);
-        chan.handler();
-      }
-
-      // wrapper to deliver packets in series
-      chan.handler = function()
-      {
-        if(chan.handling) return;
-        var packet = chan.inq[0];
-        // always force an ack when there's misses yet
-        if(!packet && chan.inq.length > 0) chan.forceAck = true;
-        if(!packet) return;
-        chan.handling = true;
-        chan.ended = chan.ended || packet.js.end;
-        if(!chan.safe) packet.js = packet.js._ || {}; // unescape all content json
-        chan.callback(chan.ended, packet, chan, function(ack){
-          // catch whenever it was ended to do cleanup
-          chan.inq.shift();
-          chan.inDone++;
-          chan.handling = false;
-          if(ack) chan.ack(); // auto-ack functionality
-          // cleanup eventually
-          if(chan.ended) cleanup();
-          chan.handler();
-        });
-      }
 
       // resend the last sent packet if it wasn't acked
       chan.resend = function()

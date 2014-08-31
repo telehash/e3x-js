@@ -61,6 +61,7 @@ describe('e3x', function(){
       self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
         expect(err).to.not.exist;
         expect(x).to.be.an('object');
+        expect(x.id).to.be.a('string');
         expect(x.decrypt).to.be.a('function');
         expect(x.channel).to.be.a('function');
         expect(x.token.length).to.be.equal(16);
@@ -170,6 +171,23 @@ describe('e3x', function(){
         expect(c.reliable).to.be.equal(true);
         expect(x.channels[c.id]).to.exist;
         done();
+      });
+    });
+  });
+
+  it('handles unreliable open', function(done){
+    e3x.self({pairs:pairsA}, function(err,self){
+      self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
+        x.sync(handshakeBA);
+        var c = x.channel({json:{c:x.cid()}});
+        c.receiving = function(err, packet, cb){
+          expect(err).to.not.exist;
+          expect(c.state).to.be.equal('open');
+          expect(packet).to.be.an('object');
+          expect(packet.json['42']).to.be.equal(true);
+          done();
+        };
+        c.receive({json:{'42':true}});
       });
     });
   });
