@@ -101,9 +101,11 @@ exports.self = function(args, cbDone){
     };
     
     x.send = function(inner){
-      if(!x.sending) return debug('send with no sending handler',inner,x.id);
-      if(!x.session) return debug('send with no session',inner,x.id);
-      x.sending(x.session.encrypt(lob.encode(inner)));
+      if(!x.sending) return self.debug('send with no sending handler',inner,x.id);
+      if(!x.session) return self.debug('send with no session',inner,x.id);
+      var enc = x.session.encrypt(lob.encode(inner.json,inner.body));
+      if(!enc) return self.debug('session encryption failed for',inner,x.id);
+      x.sending(lob.encode(null,Buffer.concat([x.token,enc])));
     };
 
     x.sync = function(handshake){
@@ -219,15 +221,15 @@ exports.self = function(args, cbDone){
 
         // process any valid newer incoming ack/miss
         var ack = parseInt(packet.json.ack);
-        if(ack > chan.outSeq) return debug("bad ack, dropping entirely",chan.outSeq,ack);
+        if(ack > chan.outSeq) return self.debug("bad ack, dropping entirely",chan.outSeq,ack);
         var miss = Array.isArray(packet.json.miss) ? packet.json.miss : [];
         if(miss.length > 100) {
-          debug("too many misses", miss.length, chan.id, x.id);
+          self.debug("too many misses", miss.length, chan.id, x.id);
           miss = miss.slice(0,100);
         }
         if(miss.length > 0 || ack > chan.lastAck)
         {
-          debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
+          self.debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
           chan.lastAck = ack;
           // rebuild outq, only keeping newer packets, resending any misses
           var outq = chan.outq;
@@ -258,18 +260,18 @@ exports.self = function(args, cbDone){
         // drop if too far ahead, must ack
         if(seq-chan.inDone > defaults.chan_inbuf)
         {
-          debug("chan too far behind, dropping", seq, chan.inDone, chan.id, x.id);
+          self.debug("chan too far behind, dropping", seq, chan.inDone, chan.id, x.id);
           return chan.forceAck = true;
         }
 
         // stash this seq and process any in sequence, adjust for yacht-based array indicies
         chan.inq[seq-(chan.inDone+1)] = packet;
-        debug("INQ",Object.keys(chan.inq),chan.inDone);
+        self.debug("INQ",Object.keys(chan.inq),chan.inDone);
         deliver();
       }
 
       chan.send = function(packet){
-        if(typeof packet != 'object' || typeof packet.json != 'object') return debug('invalid send packet',packet);
+        if(typeof packet != 'object' || typeof packet.json != 'object') return self.debug('invalid send packet',packet);
         packet.json.c = chan.id;
 
         // immediate fail errors
@@ -303,6 +305,41 @@ exports.self = function(args, cbDone){
         return chan;
       };
 
+      // add/create ack/miss values and send
+      chan.ack = function(packet)
+      {
+        if(!packet) self.debug("ACK CHECK",chan.id,chan.outConfirmed,chan.inDone);
+
+        // these are just empty "ack" requests
+        if(!packet)
+        {
+          // drop if no reason to ack so calling .ack() harmless when already ack'd
+          if(!chan.forceAck && chan.outConfirmed == chan.inDone) return;
+          packet = {json:{}};
+        }
+        chan.forceAck = false;
+
+        // confirm only what's been processed
+        if(chan.inDone >= 0) chan.outConfirmed = packet.json.ack = chan.inDone;
+
+        // calculate misses, if any
+        delete packet.json.miss; // when resending packets, make sure no old info slips through
+        if(chan.inq.length > 0)
+        {
+          packet.json.miss = [];
+          for(var i = 0; i < chan.inq.length; i++)
+          {
+            if(!chan.inq[i]) packet.json.miss.push(chan.inDone+i+1);
+          }
+        }
+
+        // now validate and send the packet
+        packet.json.c = chan.id;
+        self.debug("rel-send",chan.type,JSON.stringify(packet.json));
+        // TODO handle timeout
+        x.send(packet);
+      }
+
       // configure default timeout, for resend
       chan.timeout = defaults.chan_timeout;
       chan.retimeout = function(timeout)
@@ -328,41 +365,6 @@ exports.self = function(args, cbDone){
         debug("channel resending");
         chan.ack(lastpacket);
         setTimeout(function(){chan.resend()}, defaults.chan_resend); // recurse until chan_timeout
-      }
-
-      // add/create ack/miss values and send
-      chan.ack = function(packet)
-      {
-        if(!packet) debug("ACK CHECK",chan.id,chan.outConfirmed,chan.inDone);
-
-        // these are just empty "ack" requests
-        if(!packet)
-        {
-          // drop if no reason to ack so calling .ack() harmless when already ack'd
-          if(!chan.forceAck && chan.outConfirmed == chan.inDone) return;
-          packet = {js:{}};
-        }
-        chan.forceAck = false;
-
-        // confirm only what's been processed
-        if(chan.inDone >= 0) chan.outConfirmed = packet.js.ack = chan.inDone;
-
-        // calculate misses, if any
-        delete packet.js.miss; // when resending packets, make sure no old info slips through
-        if(chan.inq.length > 0)
-        {
-          packet.js.miss = [];
-          for(var i = 0; i < chan.inq.length; i++)
-          {
-            if(!chan.inq[i]) packet.js.miss.push(chan.inDone+i+1);
-          }
-        }
-
-        // now validate and send the packet
-        packet.js.c = chan.id;
-        debug("SEND",chan.type,JSON.stringify(packet.js));
-        cleanup();
-        hn.send(packet);
       }
 
       // send error immediately, flexible arguments

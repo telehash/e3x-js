@@ -198,10 +198,46 @@ describe('e3x', function(){
         x.sync(handshakeBA);
         x.sending = function(buf){
           expect(Buffer.isBuffer(buf)).to.be.true;
-          expect(buf.length).to.be.equal(26);
+          expect(buf.length).to.be.equal(35);
+          var pkt = lob.decode(buf);
+          expect(pkt.head.length).to.be.equal(0);
           done();
         };
         var open = {json:{c:x.cid()}};
+        var c = x.channel(open);
+        c.send(open);
+      });
+    });
+  });
+
+  it('handles reliable open', function(done){
+    e3x.self({pairs:pairsA}, function(err,self){
+      self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
+        x.sync(handshakeBA);
+        var open = {json:{c:x.cid(),seq:0}};
+        var c = x.channel(open);
+        c.receiving = function(err, packet, cb){
+          expect(err).to.not.exist;
+          expect(c.state).to.be.equal('open');
+          expect(packet).to.be.an('object');
+          expect(packet.json.seq).to.be.equal(0);
+          done();
+        };
+        c.receive(open);
+      });
+    });
+  });
+
+  it('handles reliable send', function(done){
+    e3x.self({pairs:pairsA}, function(err,self){
+      self.exchange({csid:'1a',key:pairsB['1a'].key}, function(err, x){
+        x.sync(handshakeBA);
+        x.sending = function(buf){
+          expect(Buffer.isBuffer(buf)).to.be.true;
+          expect(buf.length).to.be.equal(43);
+          done();
+        };
+        var open = {json:{c:x.cid(),seq:0}};
         var c = x.channel(open);
         c.send(open);
       });
