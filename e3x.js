@@ -12,11 +12,12 @@ var csets = exports.cs = {};
 
 exports.generate = function(cbDone){
   var pairs = {};
+  var error;
   Object.keys(csets).forEach(function(csid){
     csets[csid].generate(function(err,pair){
-      if(err) return cbDone(err);
+      error = error||err;
       pairs[csid] = pair;
-      if(Object.keys(pairs).length == Object.keys(csets).length) return cbDone(null, pairs);
+      if(Object.keys(pairs).length == Object.keys(csets).length) return cbDone(error, pairs);
     });
   });
 }
