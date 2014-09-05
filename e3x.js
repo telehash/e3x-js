@@ -22,17 +22,23 @@ exports.generate = function(cbDone){
   });
 }
 
-exports.self = function(args, cbDone){
-  if(typeof args != 'object' || typeof args.pairs != 'object') return cbDone('invald args');
+exports.self = function(args){
+  if(typeof args != 'object' || typeof args.pairs != 'object')
+  {
+    exports.err = 'invalid args';
+    return false;
+  }
+
   var self = {locals:{}};
   self.args = args;
   self.keys = {};
-  var err;
+  exports.err = undefined;
   Object.keys(csets).forEach(function(csid){
     self.keys[csid] = args.pairs[csid].key;
     self.locals[csid] = new csets[csid].Local(args.pairs[csid]);
-    err = err || self.err;
+    exports.err = exports.err || self.locals[csid].err;
   });
+  if(exports.err) return false;
   
   // utilities
   self.debug = function(){console.log.apply(console, arguments);};
@@ -47,18 +53,27 @@ exports.self = function(args, cbDone){
     return lob.decode(inner);
   }
 
-  self.exchange = function(args, cbDone)
+  self.exchange = function(args)
   {
-    if(typeof args != 'object') return cbDone('invalid args');
+    if(typeof args != 'object' || !args.key) 
+    {
+      self.err = 'invalid args';
+      return false;
+    }
     var csid = (Buffer.isBuffer(args.csid)) ? args.csid.toString('hex') : args.csid;
     var csid1 = new Buffer(csid,'hex');
-    if(!csets[csid]) return cbDone('no support for cs'+csid);
     var key = args.key;
-    if(!key) return cbDone('invalid key');
 
-    var cs = new csets[csid].Remote(key);
-    if(cs.err) return cbDone(cs.err);
-    
+    // generate the crypto backend handler
+    if(!csets[csid])
+    {
+      self.err = 'no support for cs'+csid;
+    }else{
+      var cs = new csets[csid].Remote(key);
+      self.err = cs.err;
+    }
+    if(self.err) return false;
+
     var x = {csid:csid, key:key, cs:cs, token:cs.token};
     x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
     // get our sort order by compairing the endpoint keys
@@ -75,7 +90,6 @@ exports.self = function(args, cbDone){
       cid += 2;
       return ret;
     };
-
 
     x.verify = function(message){
       return cs.verify(self.locals[csid], message.body);
@@ -139,7 +153,11 @@ exports.self = function(args, cbDone){
     };
     
     x.channel = function(open){
-      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.c != 'number') return false;
+      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.c != 'number')
+      {
+        x.err = 'invalid open';
+        return false;
+      }
 
       var chan = {state:'opening', open:open};
       // reliable setup
@@ -379,11 +397,10 @@ exports.self = function(args, cbDone){
 
     };
     
-    cbDone(null, x);
-
+    return x;
   }
 
-  cbDone(err, self);
+  return self;
 }
 
 function bufsort(a,b)

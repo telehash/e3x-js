@@ -12,28 +12,32 @@ var e3x = require('e3x');
 
 var secrets = e3x.generate();
 
-e3x.self(opts,function(err,self){
-  var inner = self.decrypt(message);
+var self = e3x.self(args);
+if(!self) console.log(e3x.err);
+
+var inner = self.decrypt(message);
   
-  self.exchange(opts,function(err,exchange){
-    exchange.token; // 16 byte buffer
-    exchange.sending = function(buffer){ }
+var exchange = self.exchange(args);
+if(!exchange) console.log(self.err);
 
-    var bool = exchange.verify(message);
-    var message = exchange.encrypt(inner);
+exchange.token; // 16 byte buffer
+exchange.sending = function(buffer){ }
 
-    var inner = exchange.decrypt(cpacket);
+var bool = exchange.verify(message);
+var message = exchange.encrypt(inner);
+
+var inner = exchange.decrypt(cpacket);
     
-    var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
-    var buffer = exchange.handshake();
+var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
+var buffer = exchange.handshake();
 
-    var channel = exchange.channel(opts, open);
-    var bool = channel.receive(inner); // true if accepted
-    channel.send(packet); // calls exchange.sending()
-    channel.state;
-    channel.receiving = function(err, packet){};
-  });
-});
+var channel = exchange.channel(open);
+if(!channel) console.log(exchange.err);
+
+var bool = channel.receive(inner); // true if accepted
+channel.send(packet); // calls exchange.sending()
+channel.state;
+channel.receiving = function(err, packet){};
 
 ```
 
