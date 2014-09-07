@@ -60,7 +60,10 @@ describe('e3x', function(){
     expect(self.err).to.not.exist;
     expect(x).to.be.an('object');
     expect(x.id).to.be.a('string');
-    expect(x.decrypt).to.be.a('function');
+    expect(x.send).to.be.a('function');
+    expect(x.receive).to.be.a('function');
+    expect(x.handshake).to.be.a('function');
+    expect(x.sync).to.be.a('function');
     expect(x.channel).to.be.a('function');
     expect(x.token.length).to.be.equal(16);
     expect(x.order).to.be.equal(2);
@@ -129,11 +132,31 @@ describe('e3x', function(){
     x.sync(handshakeAB);
     x.sending = function(packet)
     {
-      console.log("PKT",packet)
       expect(lob.isPacket(packet)).to.be.true;
       done();
     }
-    expect(x.send({c:42})).to.be.true;
+    expect(x.send(lob.packet({c:42}))).to.be.true;
+  });
+
+  it('decrypts a channel packet', function(done){
+    var selfA = e3x.self({pairs:pairsA});
+    var xA = selfA.exchange({csid:'1a',key:pairsB['1a'].key});
+    var hsAB = xA.handshake();
+
+    var selfB = e3x.self({pairs:pairsB});
+    var inner = selfB.decrypt(hsAB);
+    var xB = selfB.exchange({csid:'1a',key:inner.body});
+    var seq = xB.sync(hsAB);
+    xA.sync(xB.handshake({},seq));
+    xB.sending = function(packet)
+    {
+      expect(lob.isPacket(packet)).to.be.true;
+      var inner = xA.receive(packet);
+      expect(lob.isPacket(inner)).to.be.true;
+      expect(inner.json.c).to.be.equal(42);
+      done();
+    }
+    expect(xB.send(lob.packet({c:42}))).to.be.true;
   });
 
   it('creates an unreliable channel', function(){
@@ -178,11 +201,10 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA);
-    x.sending = function(buf){
-      expect(Buffer.isBuffer(buf)).to.be.true;
-      expect(buf.length).to.be.equal(35);
-      var pkt = lob.decode(buf);
-      expect(pkt.head.length).to.be.equal(0);
+    x.sending = function(packet){
+      expect(lob.isPacket(packet)).to.be.true;
+      expect(packet.length).to.be.equal(35);
+      expect(packet.head.length).to.be.equal(0);
       done();
     };
     var open = {json:{c:x.cid()}};

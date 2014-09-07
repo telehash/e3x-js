@@ -26,10 +26,10 @@ exchange.sending = function(packet){ }
 var bool = exchange.verify(message);
 var message = exchange.encrypt(inner);
 
-var inner = exchange.decrypt(cpacket);
+var inner = exchange.receive(cpacket);
     
-var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
-var handshake = exchange.handshake();
+var seq = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
+var handshake = exchange.handshake(js,seq);
 
 var channel = exchange.channel(open);
 if(!channel) console.log(exchange.err);

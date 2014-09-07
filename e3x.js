@@ -107,18 +107,19 @@ exports.self = function(args){
       return lob.packet(csid1,body);
     };
 
-    x.decrypt = function(packet){
-      if(typeof packet != 'object' || !Buffer.isBuffer(packet.body) || message.head.length !== 0) return false;
-      if(!x.session) return false;
-      var inner = x.session.decrypt(message.body.slice(16));
-      if(!inner) return false;
+    x.receive = function(packet){
+      if(!lob.isPacket(packet) || packet.head.length !== 0) return (x.err='invalid packet')&&false;
+      if(!x.session) return (x.err='handshake sync required')&&false;
+      var inner = x.session.decrypt(packet.body.slice(16));
+      if(!inner) return (x.err='decrypt failed: '+x.session.err)&&false;
       return lob.decode(inner);
     };
     
     x.send = function(inner){
+      if(!lob.isPacket(inner)) return (x.err='invalid inner packet')&&false;
       if(!x.sending) return (x.err='send with no sending handler')&&false;
       if(!x.session) return (x.err='send with no session')&&false;
-      var enc = x.session.encrypt(lob.encode(inner.json,inner.body));
+      var enc = x.session.encrypt(inner);
       if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
       x.sending(lob.packet(null,Buffer.concat([x.token,enc])));
       return true;
@@ -148,7 +149,7 @@ exports.self = function(args){
     };
 
     // just a convenience
-    x.handshake = function(js, seq){
+    x.handshake = function(js,seq){
       var inner = lob.encode(js,self.keys[csid]);
       if(!inner) return (x.err='encode failed')&&false;
       return x.encrypt(inner,seq);
@@ -307,7 +308,7 @@ exports.self = function(args){
         // unreliable just send straight away
         if(!chan.reliable)
         {
-          return x.send(packet);
+          return x.send(lob.packet(packet.json,packet.body));
         }
 
         // do reliable tracking
@@ -358,7 +359,7 @@ exports.self = function(args){
         packet.json.c = chan.id;
         self.debug("rel-send",chan.type,JSON.stringify(packet.json));
         // TODO handle timeout
-        x.send(packet);
+        x.send(lob.packet(packet.json,packet.body));
       }
 
       // configure default timeout, for resend
