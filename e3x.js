@@ -104,7 +104,7 @@ exports.self = function(args){
       }
       var body = cs.encrypt(self.locals[csid], inner, seq);
       if(!body) return false;
-      return lob.encode(csid1,body);
+      return lob.packet(csid1,body);
     };
 
     x.decrypt = function(packet){
@@ -116,11 +116,12 @@ exports.self = function(args){
     };
     
     x.send = function(inner){
-      if(!x.sending) return self.debug('send with no sending handler',inner,x.id);
-      if(!x.session) return self.debug('send with no session',inner,x.id);
+      if(!x.sending) return (x.err='send with no sending handler')&&false;
+      if(!x.session) return (x.err='send with no session')&&false;
       var enc = x.session.encrypt(lob.encode(inner.json,inner.body));
-      if(!enc) return self.debug('session encryption failed for',inner,x.id);
-      x.sending(lob.encode(null,Buffer.concat([x.token,enc])));
+      if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
+      x.sending(lob.packet(null,Buffer.concat([x.token,enc])));
+      return true;
     };
 
     x.sync = function(handshake){
@@ -146,10 +147,11 @@ exports.self = function(args){
       return seq;
     };
 
+    // just a convenience
     x.handshake = function(js, seq){
       var inner = lob.encode(js,self.keys[csid]);
-      var handshake = x.encrypt(inner,seq);
-      return handshake;
+      if(!inner) return (x.err='encode failed')&&false;
+      return x.encrypt(inner,seq);
     };
     
     x.channel = function(open){

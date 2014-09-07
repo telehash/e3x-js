@@ -71,7 +71,7 @@ describe('e3x', function(){
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     var handshake = x.handshake();
 //     console.log('handshakeAB',handshake.toString('hex'));
-    expect(handshake).to.be.an('object');
+    expect(lob.isPacket(handshake)).to.be.true;
     expect(handshake.length).to.be.equal(55);
   });
 
@@ -80,7 +80,7 @@ describe('e3x', function(){
     var x = self.exchange({csid:'1a',key:pairsA['1a'].key});
     var handshake = x.handshake();
 //      console.log('handshakeBA',handshake.toString('hex'));
-    expect(handshake).to.be.an('object');
+    expect(lob.isPacket(handshake)).to.be.true;
     expect(handshake.length).to.be.equal(55);
   });
 
@@ -120,6 +120,20 @@ describe('e3x', function(){
     x.seq = 1409417261; // force this so that it tests accepting the handshake
     var bool = x.sync(handshakeAB);
     expect(bool).to.be.equal(0);
+  });
+
+  it('sends a channel packet', function(done){
+    var self = e3x.self({pairs:pairsB});
+    var inner = self.decrypt(handshakeAB);
+    var x = self.exchange({csid:'1a',key:inner.body});
+    x.sync(handshakeAB);
+    x.sending = function(packet)
+    {
+      console.log("PKT",packet)
+      expect(lob.isPacket(packet)).to.be.true;
+      done();
+    }
+    expect(x.send({c:42})).to.be.true;
   });
 
   it('creates an unreliable channel', function(){

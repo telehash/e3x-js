@@ -21,7 +21,7 @@ var exchange = self.exchange(args);
 if(!exchange) console.log(self.err);
 
 exchange.token; // 16 byte buffer
-exchange.sending = function(buffer){ }
+exchange.sending = function(packet){ }
 
 var bool = exchange.verify(message);
 var message = exchange.encrypt(inner);
@@ -29,7 +29,7 @@ var message = exchange.encrypt(inner);
 var inner = exchange.decrypt(cpacket);
     
 var bool = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
-var buffer = exchange.handshake();
+var handshake = exchange.handshake();
 
 var channel = exchange.channel(open);
 if(!channel) console.log(exchange.err);
