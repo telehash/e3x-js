@@ -29,7 +29,7 @@ var message = exchange.encrypt(inner);
 var inner = exchange.receive(cpacket);
     
 var seq = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
-var handshake = exchange.handshake(js,seq);
+var handshake = exchange.handshake(js);
 
 var channel = exchange.channel(open);
 if(!channel) console.log(exchange.err);

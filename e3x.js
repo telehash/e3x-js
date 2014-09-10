@@ -1,5 +1,6 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
+var hashname = require('hashname');
 
 var defaults = exports.defaults = {};
 defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
@@ -39,7 +40,7 @@ exports.self = function(args){
     exports.err = exports.err || self.locals[csid].err;
   });
   if(exports.err) return false;
-  
+
   // utilities
   self.debug = function(){console.log.apply(console, arguments);};
 
@@ -78,9 +79,6 @@ exports.self = function(args){
     x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
     // get our sort order by compairing the endpoint keys
     x.order = (bufsort(self.keys[csid],key) == key) ? 2 : 1;
-    // generate a starting seq value that is unique
-    x.seq = Math.floor(Date.now()/1000);
-    if(x.seq % 2 === 0 && x.order != 2) x.seq++;
 
     // set the channel id base and increment properly to be unique
     x.channels = {};
@@ -95,14 +93,8 @@ exports.self = function(args){
       return cs.verify(self.locals[csid], message.body);
     };
 
-    x.encrypt = function(inner, seq){
-      // increment our own seq if no override given
-      if(!seq)
-      {
-        x.seq += 2;
-        seq = x.seq;
-      }
-      var body = cs.encrypt(self.locals[csid], inner, seq);
+    x.encrypt = function(inner){
+      var body = cs.encrypt(self.locals[csid], inner);
       if(!body) return false;
       return lob.packet(csid1,body);
     };
@@ -125,34 +117,40 @@ exports.self = function(args){
       return true;
     };
 
-    x.sync = function(handshake){
-      // verify incoming seq
-      var seq = handshake.body.readUInt32BE(0);
-      if(seq % 2 === 0 && x.order == 2) return x.seq; // invalid! send handshake
+    x.sync = function(handshake, inner){
+      if(!handshake || !inner) return -1;
 
       // create session
       var session = new csets[csid].Ephemeral(cs, handshake.body);
-      if(session.err) return x.seq;
+      if(session.err) return -1;
       x.session = session;
 
-      // don't send a handshake if it's an ack
-      if(seq == x.seq) return 0;
-      
-      // send ours if higher
-      if(x.seq > seq) return x.seq;
-      
-      // set our next one to be higher
-      x.seq = seq + 1;
+      // don't send a handshake if it's an ack, we're in sync
+      if(x.at && inner.json.at == x.at) return 0;
 
+      // make sure theirs is legit, or send a new one
+      if(typeof inner.json.at != 'number') return -1;
+      if(inner.json.at % 2 === 0 && x.order == 2) return -1;
+      
+      // resend ours if higher
+      if(x.at > inner.json.at) return x.at;
+      
       // ack theirs
-      return seq;
+      return inner.json.at;
     };
 
-    // just a convenience
-    x.handshake = function(js,seq){
-      var inner = lob.encode(js,self.keys[csid]);
-      if(!inner) return (x.err='encode failed')&&false;
-      return x.encrypt(inner,seq);
+    x.handshake = function(at){
+      // set a correct at if none given
+      if(!at)
+      {
+        at = Math.floor(Date.now()/1000);
+        if(at % 2 === 0 && x.order != 2) at++;
+        x.at = at; // to verify new outgoing in return sync
+      }
+      var inner = hashname.toPacket(self.keys,csid);
+      delete inner.json[csid]; // is implied here
+      inner.json.at = at;
+      return x.encrypt(lob.encode(inner));
     };
     
     x.channel = function(open){

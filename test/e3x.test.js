@@ -75,7 +75,7 @@ describe('e3x', function(){
     var handshake = x.handshake();
 //     console.log('handshakeAB',handshake.toString('hex'));
     expect(lob.isPacket(handshake)).to.be.true;
-    expect(handshake.length).to.be.equal(55);
+    expect(handshake.length).to.be.equal(72);
   });
 
   it('generates another handshake', function(){
@@ -84,7 +84,7 @@ describe('e3x', function(){
     var handshake = x.handshake();
 //      console.log('handshakeBA',handshake.toString('hex'));
     expect(lob.isPacket(handshake)).to.be.true;
-    expect(handshake.length).to.be.equal(55);
+    expect(handshake.length).to.be.equal(72);
   });
 
   it('decode a handshake', function(){
@@ -112,24 +112,24 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
     var x = self.exchange({csid:'1a',key:inner.body});
-    var bool = x.sync(handshakeAB);
-    expect(bool).to.be.above(0);
+    var at = x.sync(handshakeAB,{json:{}});
+    expect(at).to.be.equal(-1);
   });
 
   it('be in sync from a handshake', function(){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
     var x = self.exchange({csid:'1a',key:inner.body});
-    x.seq = 1409417261; // force this so that it tests accepting the handshake
-    var bool = x.sync(handshakeAB);
-    expect(bool).to.be.equal(0);
+    x.at = 1409417261; // force this so that it tests accepting the handshake
+    var at = x.sync(handshakeAB,{json:{at:1409417261}});
+    expect(at).to.be.equal(0);
   });
 
   it('sends a channel packet', function(done){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
     var x = self.exchange({csid:'1a',key:inner.body});
-    x.sync(handshakeAB);
+    x.sync(handshakeAB,{json:{}});
     x.sending = function(packet)
     {
       expect(lob.isPacket(packet)).to.be.true;
@@ -146,8 +146,8 @@ describe('e3x', function(){
     var selfB = e3x.self({pairs:pairsB});
     var inner = selfB.decrypt(hsAB);
     var xB = selfB.exchange({csid:'1a',key:inner.body});
-    var seq = xB.sync(hsAB);
-    xA.sync(xB.handshake({},seq));
+    var at = xB.sync(hsAB);
+    xA.sync(xB.handshake(at));
     xB.sending = function(packet)
     {
       expect(lob.isPacket(packet)).to.be.true;
@@ -185,7 +185,7 @@ describe('e3x', function(){
   it('handles unreliable open', function(done){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
-    x.sync(handshakeBA);
+    x.sync(handshakeBA,{json:{}});
     var c = x.channel({json:{c:x.cid()}});
     c.receiving = function(err, packet, cb){
       expect(err).to.not.exist;
@@ -200,7 +200,7 @@ describe('e3x', function(){
   it('handles unreliable send', function(done){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
-    x.sync(handshakeBA);
+    x.sync(handshakeBA,{json:{}});
     x.sending = function(packet){
       expect(lob.isPacket(packet)).to.be.true;
       expect(packet.length).to.be.equal(35);
@@ -215,7 +215,7 @@ describe('e3x', function(){
   it('handles reliable open', function(done){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
-    x.sync(handshakeBA);
+    x.sync(handshakeBA,{json:{}});
     var open = {json:{c:x.cid(),seq:0}};
     var c = x.channel(open);
     c.receiving = function(err, packet, cb){
@@ -231,7 +231,7 @@ describe('e3x', function(){
   it('handles reliable send', function(done){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
-    x.sync(handshakeBA);
+    x.sync(handshakeBA,{json:{}});
     x.sending = function(buf){
       expect(Buffer.isBuffer(buf)).to.be.true;
       expect(buf.length).to.be.equal(43);
