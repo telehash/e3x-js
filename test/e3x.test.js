@@ -23,8 +23,8 @@ describe('e3x', function(){
   // fixtures
   var pairsA = {"1a":h2b({"key":"03a3c4c9f6e081706be52903c75e077f0f3264eda1","secret":"12d2af807dd9cf8e3f99df395fac08dede4de913"})};
   var pairsB = {"1a":h2b({"key":"03fef52613c4dad0614d92cb7331d3e64658e0b8ba","secret":"a1e95d6a1bb247183b2f52f97c174a9fb39905d9"})};
-  var handshakeAB = lob.decode(new Buffer('00011a5402002d03ad284810d9a0ce5194b8ead5e08a43e84c84b1a8aa13724c52660c34ad7e977b158b24b26571b53ed5dd6babe0d632','hex'));
-  var handshakeBA = lob.decode(new Buffer('00011a5402002d031b53524a276381f39453e441fd4f576b9b851b2a7c9c38fbd0a1221c9ef13255895013fb77f2609574f78f3d79e07b','hex'));
+  var handshakeAB = lob.decode(new Buffer('00011a036a8315f095fcfca8f903d51e350ae5edc10ae2c95cac38d695a475ec9f6e7809a1d4a4fd9c84b3826280ffcd5f9c5c2d2a5354e7f50a4b8b2f26ebd0cbb25bf3a71e2502','hex'));
+  var handshakeBA = lob.decode(new Buffer('00011a0347ed6cf7cf3506ab69ab54499cd60940f8048c61148f1819228c3f5140790d2cd87d334c970e5614685d26c733a4f03ed0604cea9a4f27f41f7569145981755faa3989ff','hex'));
 
   it('should export an object', function(){
     expect(e3x).to.be.a('object');
@@ -146,7 +146,7 @@ describe('e3x', function(){
     var selfB = e3x.self({pairs:pairsB});
     var inner = selfB.decrypt(hsAB);
     var xB = selfB.exchange({csid:'1a',key:inner.body});
-    var at = xB.sync(hsAB);
+    var at = xB.sync(hsAB,inner);
     xA.sync(xB.handshake(at));
     xB.sending = function(packet)
     {

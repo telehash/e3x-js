@@ -118,7 +118,8 @@ exports.self = function(args){
     };
 
     x.sync = function(handshake, inner){
-      if(!handshake || !inner) return -1;
+      if(!handshake) return -1;
+      if(!inner) inner = self.decrypt(handshake); // optimization to pass one in already done
 
       // create session
       var session = new csets[csid].Ephemeral(cs, handshake.body);
