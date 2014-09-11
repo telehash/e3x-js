@@ -127,7 +127,11 @@ exports.self = function(args){
       x.session = session;
 
       // don't send a handshake if it's an ack, we're in sync
-      if(x.at && inner.json.at == x.at) return 0;
+      if(x.at && inner.json.at == x.at)
+      {
+        x.at = 0;
+        return 0;
+      }
 
       // make sure theirs is legit, or send a new one
       if(typeof inner.json.at != 'number') return -1;
@@ -136,17 +140,20 @@ exports.self = function(args){
       // resend ours if higher
       if(x.at > inner.json.at) return x.at;
       
-      // ack theirs
+      // theirs is higher, dump any cache and ack theirs
+      x.at = 0;
       return inner.json.at;
     };
 
     x.handshake = function(at){
-      // set a correct at if none given
+      // if no at, try using cached one
+      if(!at) at = x.at;
+      // if still no at, set a new one
       if(!at)
       {
         at = Math.floor(Date.now()/1000);
         if(at % 2 === 0 && x.order != 2) at++;
-        x.at = at; // to verify new outgoing in return sync
+        x.at = at; // cache it and to verify in return sync
       }
       var inner = hashname.toPacket(self.keys,csid);
       delete inner.json[csid]; // is implied here
