@@ -147,7 +147,7 @@ exports.self = function(args){
 
     x.handshake = function(at){
       // if no at, try using cached one
-      if(!at) at = x.at;
+      if(!at || at < 0) at = x.at;
       // if still no at, set a new one
       if(!at)
       {
