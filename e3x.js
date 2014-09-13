@@ -144,6 +144,17 @@ exports.self = function(args){
       x.at = 0;
       return inner.json.at;
     };
+    
+    // resend any packets we can
+    x.flush = function(){
+      Object.keys(x.channels).forEach(function(id){
+        var chan = x.channels[id];
+        // outgoing channels still opening, resend open
+        if(chan.isOut && chan.state == 'opening') chan.send(chan.open);
+        // any open reliable channel, force ack
+        if(chan.state == 'open' && chan.reliable) chan.send({json:{}});
+      })
+    }
 
     x.handshake = function(at){
       // if no at, try using cached one
@@ -162,7 +173,7 @@ exports.self = function(args){
     };
     
     x.channel = function(open){
-      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.c != 'number')
+      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.c != 'number' || typeof open.json.type != 'string')
       {
         x.err = 'invalid open';
         return false;

@@ -165,7 +165,7 @@ describe('e3x', function(){
     x.sync(handshakeBA);
     var cid = x.cid();
     expect(cid).to.be.above(0);
-    var c = x.channel({json:{c:cid}});
+    var c = x.channel({json:{c:cid,type:'test'}});
     expect(c).to.be.an('object');
     expect(c.reliable).to.be.false;
     expect(c.send).to.be.a('function');
@@ -177,7 +177,7 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA);
-    var c = x.channel({json:{c:x.cid(),seq:0}});
+    var c = x.channel({json:{c:x.cid(),seq:0,type:'test'}});
     expect(c.reliable).to.be.true;
     expect(x.channels[c.id]).to.exist;
   });
@@ -186,7 +186,7 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}});
-    var c = x.channel({json:{c:x.cid()}});
+    var c = x.channel({json:{c:x.cid(),type:'test'}});
     c.receiving = function(err, packet, cb){
       expect(err).to.not.exist;
       expect(c.state).to.be.equal('open');
@@ -203,11 +203,11 @@ describe('e3x', function(){
     x.sync(handshakeBA,{json:{}});
     x.sending = function(packet){
       expect(lob.isPacket(packet)).to.be.true;
-      expect(packet.length).to.be.equal(35);
+      expect(packet.length).to.be.equal(49);
       expect(packet.head.length).to.be.equal(0);
       done();
     };
-    var open = {json:{c:x.cid()}};
+    var open = {json:{c:x.cid(),type:'test'}};
     var c = x.channel(open);
     c.send(open);
   });
@@ -216,7 +216,7 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}});
-    var open = {json:{c:x.cid(),seq:0}};
+    var open = {json:{c:x.cid(),seq:0,type:'test'}};
     var c = x.channel(open);
     c.receiving = function(err, packet, cb){
       expect(err).to.not.exist;
@@ -234,10 +234,10 @@ describe('e3x', function(){
     x.sync(handshakeBA,{json:{}});
     x.sending = function(buf){
       expect(Buffer.isBuffer(buf)).to.be.true;
-      expect(buf.length).to.be.equal(43);
+      expect(buf.length).to.be.equal(57);
       done();
     };
-    var open = {json:{c:x.cid(),seq:0}};
+    var open = {json:{c:x.cid(),seq:0,type:'test'}};
     var c = x.channel(open);
     c.send(open);
   });
