@@ -173,11 +173,14 @@ exports.self = function(args){
     };
     
     x.channel = function(open){
-      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.c != 'number' || typeof open.json.type != 'string')
+      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string')
       {
         x.err = 'invalid open';
         return false;
       }
+      
+      // be friendly
+      if(typeof open.json.c != 'number') open.json.c = x.cid();
 
       var chan = {state:'opening', open:open};
       // reliable setup
