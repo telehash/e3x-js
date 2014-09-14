@@ -108,12 +108,14 @@ exports.self = function(args){
     };
     
     x.send = function(inner){
-      if(!lob.isPacket(inner)) return (x.err='invalid inner packet')&&false;
+      if(typeof inner != 'object') return (x.err='invalid inner packet')&&false;
       if(!x.sending) return (x.err='send with no sending handler')&&false;
       if(!x.session) return (x.err='send with no session')&&false;
+      if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
       var enc = x.session.encrypt(inner);
       if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
-      x.sending(lob.packet(null,Buffer.concat([x.token,enc])));
+      // use senders token for routing
+      x.sending(lob.packet(null,Buffer.concat([x.session.token,enc])));
       return true;
     };
 
@@ -379,7 +381,7 @@ exports.self = function(args){
         packet.json.c = chan.id;
         self.debug("rel-send",chan.type,JSON.stringify(packet.json));
         // TODO handle timeout
-        x.send(lob.packet(packet.json,packet.body));
+        return x.send(lob.packet(packet.json,packet.body));
       }
 
       // configure default timeout, for resend
