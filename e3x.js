@@ -352,7 +352,12 @@ exports.self = function(args){
       // add/create ack/miss values and send
       chan.ack = function(packet)
       {
-        if(!packet) self.debug("ACK CHECK",chan.id,chan.outConfirmed,chan.inDone);
+        if(!chan.reliable)
+        {
+          if(packet) self.debug('dropping invalid ack packet for unreliable',packet);
+          return;
+        }
+        if(!packet) self.debug('ack check',chan.id,chan.outConfirmed,chan.inDone);
 
         // these are just empty "ack" requests
         if(!packet)
