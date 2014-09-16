@@ -132,10 +132,10 @@ describe('e3x', function(){
     x.sync(handshakeAB,{json:{}});
     x.sending = function(packet)
     {
-      expect(lob.isPacket(packet)).to.be.true;
+      expect(lob.isPacket(packet)).to.not.be.false;
       done();
     }
-    expect(x.send(lob.packet({c:42}))).to.be.true;
+    expect(x.send(lob.packet({c:42}))).to.not.be.false;
   });
 
   it('decrypts a channel packet', function(done){
@@ -156,7 +156,7 @@ describe('e3x', function(){
       expect(inner.json.c).to.be.equal(42);
       done();
     }
-    expect(xB.send(lob.packet({c:42}))).to.be.true;
+    expect(xB.send(lob.packet({c:42}))).to.not.be.false;
   });
 
   it('creates an unreliable channel', function(){

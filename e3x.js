@@ -107,7 +107,7 @@ exports.self = function(args){
       return lob.decode(inner);
     };
     
-    x.send = function(inner){
+    x.send = function(inner, arg){
       if(typeof inner != 'object') return (x.err='invalid inner packet')&&false;
       if(!x.sending) return (x.err='send with no sending handler')&&false;
       if(!x.session) return (x.err='send with no session')&&false;
@@ -115,8 +115,9 @@ exports.self = function(args){
       var enc = x.session.encrypt(inner);
       if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
       // use senders token for routing
-      x.sending(lob.packet(null,Buffer.concat([x.session.token,enc])));
-      return true;
+      var packet = lob.packet(null,Buffer.concat([x.session.token,enc]))
+      if(typeof x.sending == 'function') x.sending(packet, arg);
+      return packet;
     };
 
     x.sync = function(handshake, inner){
