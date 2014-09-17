@@ -136,6 +136,9 @@ describe('e3x', function(){
     x.at = 1409417261; // force this so that it tests accepting the handshake
     var at = x.sync(handshakeAB,{json:{at:1409417261}});
     expect(at).to.be.equal(0);
+    // do it twice to make sure it's consistent
+    var at = x.sync(handshakeAB,{json:{at:1409417261}});
+    expect(at).to.be.equal(0);
   });
 
   it('sends a channel packet', function(done){

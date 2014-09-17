@@ -132,7 +132,6 @@ exports.self = function(args){
       // don't send a handshake if it's an ack, we're in sync
       if(x.at && inner.json.at == x.at)
       {
-        x.at = 0;
         return 0;
       }
 
@@ -143,8 +142,8 @@ exports.self = function(args){
       // resend ours if higher
       if(x.at > inner.json.at) return x.at;
       
-      // theirs is higher, dump any cache and ack theirs
-      x.at = 0;
+      // theirs is higher, cache it and ack theirs
+      x.at = inner.json.at;
       return inner.json.at;
     };
     
