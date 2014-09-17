@@ -77,7 +77,8 @@ describe('e3x', function(){
     setTimeout(function(){
       var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
       x.handshake();
-      expect(x.at % 2).to.be.equal(x.order?0:1)
+      expect(x.at % 2).to.be.equal(x.order?0:1);
+      done();
     },1000);
   });
 

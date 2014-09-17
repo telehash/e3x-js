@@ -166,7 +166,13 @@ exports.self = function(args){
       if(!at)
       {
         at = Math.floor(Date.now()/1000);
-        if(at % 2 === 0 && x.order != 2) at++;
+        // make sure it's even/odd correctly
+        if(x.order == 2)
+        {
+          if(at % 2 !== 0) at++;
+        }else{
+          if(at % 2 === 0) at++;
+        }
         x.at = at; // cache it and to verify in return sync
       }
       var inner = hashname.toPacket(self.keys,csid);
