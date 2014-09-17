@@ -69,6 +69,18 @@ describe('e3x', function(){
     expect(x.order).to.be.equal(2);
   });
 
+  it('does even odd', function(done){
+    var self = e3x.self({pairs:pairsA});
+    var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
+    x.handshake();
+    expect(x.at % 2).to.be.equal(x.order?0:1)
+    setTimeout(function(){
+      var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
+      x.handshake();
+      expect(x.at % 2).to.be.equal(x.order?0:1)
+    },1000);
+  });
+
   it('generates a handshake', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
