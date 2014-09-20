@@ -129,8 +129,8 @@ exports.self = function(args){
       if(session.err) return -1;
       x.session = session;
 
-      // don't send a handshake if it's an ack, we're in sync
-      if(x.at && inner.json.at == x.at)
+      // don't send a handshake if it's an ack to ours, we're in sync
+      if(x.at && (x.at % x.order) == 0 && inner.json.at == x.at)
       {
         return 0;
       }
