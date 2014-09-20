@@ -141,6 +141,19 @@ describe('e3x', function(){
     expect(at).to.be.equal(0);
   });
 
+  it('generate at, cache, and reset it', function(){
+    var self = e3x.self({pairs:pairsB});
+    var inner = self.decrypt(handshakeAB);
+    var x = self.exchange({csid:'1a',key:inner.body});
+    expect(x.at).to.not.exist;
+    var at = x.sync(handshakeAB,{json:{at:1409417261}});
+    expect(x.at).to.be.equal(1409417261);
+    expect(x.handshake()).to.exist;
+    expect(x.at).to.be.equal(1409417261);
+    expect(x.handshake(true)).to.exist;
+    expect(x.at).to.be.above(1409417261);
+  });
+
   it('sends a channel packet', function(done){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
