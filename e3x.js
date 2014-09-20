@@ -164,7 +164,8 @@ exports.self = function(args){
       // if still no at, set a new one
       if(typeof at != 'number')
       {
-        at = Math.floor(Date.now()/1000);
+        // use the cached at or set a new one
+        at = (x.at+1)||Math.floor(Date.now()/1000);
         // make sure it's even/odd correctly
         if(x.order == 2)
         {
