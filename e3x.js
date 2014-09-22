@@ -256,7 +256,7 @@ exports.self = function(args){
         {
           chan.inq = [];
           chan.err = packet.json.err;
-          if(chan.receiving) chan.receiving(chan.err, packet);
+          if(chan.receiving) chan.receiving(chan.err, packet, function(){});
           return cleanup();
         }
 
