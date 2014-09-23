@@ -182,7 +182,7 @@ exports.self = function(args){
     };
     
     x.channel = function(open){
-      if(!x.session || typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string')
+      if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string')
       {
         x.err = 'invalid open';
         return false;
