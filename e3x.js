@@ -30,7 +30,7 @@ exports.self = function(args){
     return false;
   }
 
-  var self = {locals:{}};
+  var self = {locals:{}, isSelf:true};
   self.args = args;
   self.keys = {};
   exports.err = undefined;
@@ -75,7 +75,7 @@ exports.self = function(args){
     }
     if(self.err) return false;
 
-    var x = {csid:csid, key:key, cs:cs, token:cs.token};
+    var x = {csid:csid, key:key, cs:cs, token:cs.token, isExchange:true};
     x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
     // get our sort order by compairing the endpoint keys
     x.order = (bufsort(self.keys[csid],key) == key) ? 2 : 1;
@@ -191,7 +191,7 @@ exports.self = function(args){
       // be friendly
       if(typeof open.json.c != 'number') open.json.c = x.cid();
 
-      var chan = {state:'opening', open:open};
+      var chan = {state:'opening', open:open, isChannel:true};
       // reliable setup
       if(open.json.seq === 0)
       {
