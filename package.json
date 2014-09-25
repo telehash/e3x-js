@@ -2,7 +2,7 @@
   "name": "e3x",
   "description": "End-to-End Encrypted eXchange",
   "homepage": "https://github.com/quartzjer/e3x",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "dependencies": {
     "lob-enc": "git+https://github.com/quartzjer/lob-enc.git",
     "hashname": "git+https://github.com/quartzjer/hashname.git",
