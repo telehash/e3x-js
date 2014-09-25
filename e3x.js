@@ -194,7 +194,10 @@ exports.self = function(args){
       var chan = {state:'opening', open:open, isChannel:true};
       
       // stub handler, to be replaced by app
-      chan.receiving = function(err, packet, cb){ cb();}
+      chan.receiving = function(err, packet, cb){
+        self.debug('no channel receiving handler');
+        cb();
+      }
 
       // reliable setup
       if(open.json.seq === 0)
