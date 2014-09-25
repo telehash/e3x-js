@@ -192,6 +192,10 @@ exports.self = function(args){
       if(typeof open.json.c != 'number') open.json.c = x.cid();
 
       var chan = {state:'opening', open:open, isChannel:true};
+      
+      // stub handler, to be replaced by app
+      chan.receiving = function(err, packet, cb){ cb();}
+
       // reliable setup
       if(open.json.seq === 0)
       {
@@ -226,7 +230,6 @@ exports.self = function(args){
       function deliver()
       {
         if(delivering) return; // one at a time
-        if(!chan.receiving) return; // requires somewhere to deliver to
         if(chan.state != "open") return; // paranoid
         var packet = chan.inq[0];
         // always force an ack when there's misses yet
@@ -256,7 +259,7 @@ exports.self = function(args){
         {
           chan.inq = [];
           chan.err = packet.json.err;
-          if(chan.receiving) chan.receiving(chan.err, packet, function(){});
+          chan.receiving(chan.err, packet, function(){});
           return cleanup();
         }
 
@@ -322,7 +325,8 @@ exports.self = function(args){
       }
 
       chan.send = function(packet){
-        if(typeof packet != 'object' || typeof packet.json != 'object') return self.debug('invalid send packet',packet);
+        if(typeof packet != 'object') return self.debug('invalid send packet',packet);
+        if(!packet.json) packet.json = {};
         packet.json.c = chan.id;
 
         // immediate fail errors
