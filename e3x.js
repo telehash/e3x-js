@@ -357,9 +357,6 @@ exports.self = function(args){
         // add optional ack/miss and send
         chan.ack(packet);
 
-        // to auto-resend if it isn't acked
-        if(chan.resender) clearTimeout(chan.resender);
-        chan.resender = setTimeout(function(){chan.resend()}, defaults.chan_resend);
         return chan;
       };
 
@@ -399,7 +396,13 @@ exports.self = function(args){
         // now validate and send the packet
         packet.json.c = chan.id;
         self.debug("rel-send",chan.type,JSON.stringify(packet.json));
+
         // TODO handle timeout
+
+        // to auto-ack if it isn't acked
+        if(chan.resender) clearTimeout(chan.resender);
+        chan.resender = setTimeout(function(){chan.ack}, defaults.chan_resend);
+
         return x.send(lob.packet(packet.json,packet.body));
       }
 
