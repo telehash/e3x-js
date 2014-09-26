@@ -271,4 +271,16 @@ describe('e3x', function(){
     c.send(open);
   });
 
+  it('handles channel error', function(done){
+    var self = e3x.self({pairs:pairsA});
+    var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
+    x.sync(handshakeBA,{json:{}});
+    var open = {json:{c:x.cid(),type:'test'}};
+    var c = x.channel(open);
+    c.send(open);
+    c.send({json:{err:'bad'}});
+    expect(c.err).to.be.equal('bad');
+    done();
+  });
+
 });

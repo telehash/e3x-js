@@ -335,9 +335,9 @@ exports.self = function(args){
         // immediate fail errors
         if(packet.json.err)
         {
-          if(chan.err) return; // don't double-error
+          if(chan.err) return self.debug('double-error',chan.err,packet.json.err); // don't double-error
           chan.err = packet.json.err;
-          // x.send(packet);
+          x.send(packet);
           return cleanup();
         }
 
