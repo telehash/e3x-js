@@ -42,7 +42,7 @@ exports.self = function(args){
   if(exports.err) return false;
 
   // utilities
-  self.debug = function(){console.log.apply(console, arguments);};
+  self.debug = args.debug||function(){console.log.apply(console, arguments);};
 
   self.decrypt = function(message)
   {
