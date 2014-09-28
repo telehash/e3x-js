@@ -112,6 +112,7 @@ exports.self = function(args){
       if(!x.sending) return (x.err='send with no sending handler')&&false;
       if(!x.session) return (x.err='send with no session')&&false;
       if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
+      self.debug('channel encrypting',inner.json,inner.body.length);
       var enc = x.session.encrypt(inner);
       if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
       // use senders token for routing
@@ -178,6 +179,7 @@ exports.self = function(args){
       var inner = hashname.toPacket(self.keys,csid);
       delete inner.json[csid]; // is implied here
       inner.json.at = at;
+      self.debug('handshake generated',at);
       return x.encrypt(lob.encode(inner));
     };
     
