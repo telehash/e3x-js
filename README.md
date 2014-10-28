@@ -68,7 +68,7 @@ var outer = remote.encrypt(local, inner);
 
 var ephemeral = new cs.Ephemeral(remote, body);
 var outer = ephemeral.encrypt(inner)
-ver inner = ephemeral.decrypt(outer)
+var inner = ephemeral.decrypt(outer)
 
 
 ```
