@@ -122,30 +122,30 @@ exports.self = function(args){
     };
 
     x.sync = function(handshake, inner){
-      if(!handshake) return -1;
+      if(!handshake) return false;
       if(!inner) inner = self.decrypt(handshake); // optimization to pass one in already done
+      if(!inner) return false;
 
-      // create session
-      var session = new csets[csid].Ephemeral(cs, handshake.body);
-      if(session.err) return -1;
-      x.session = session;
-
-      // don't send a handshake if it's an ack to ours, we're in sync
-      if(x.at && (x.at % x.order) == 0 && inner.json.at == x.at)
+      // create session if needed
+      if(!x.session)
       {
-        return 0;
+        var session = new csets[csid].Ephemeral(cs, handshake.body);
+        if(session.err) return false;
+        x.session = session;
       }
 
       // make sure theirs is legit, or send a new one
-      if(typeof inner.json.at != 'number') return -1;
-      if(inner.json.at % 2 === 0 && x.order == 2) return -1;
+      if(typeof inner.json.at != 'number') return false;
+      if(inner.json.at % 2 === 0 && x.order == 2) return false;
+
+      // do nothing if we're in sync
+      if(x._at === inner.json.at) return true;
+
+      // if they're higher, save it as the best
+      if(x._at < inner.json.at) x._at = inner.json.at;
       
-      // resend ours if higher
-      if(x.at > inner.json.at) return x.at;
-      
-      // theirs is higher, cache it and ack theirs
-      x.at = inner.json.at;
-      return inner.json.at;
+      // signal to send a handshake
+      return false;
     };
     
     // resend any packets we can
@@ -159,14 +159,10 @@ exports.self = function(args){
       })
     }
 
-    x.handshake = function(at){
-      // if no at, try using cached one
-      if(at === undefined || at < 0) at = x.at;
-      // if still no at, set a new one
-      if(typeof at != 'number')
+    // set/return at
+    x.at = function(at){
+      if(at)
       {
-        // use the cached at or set a new one
-        at = (x.at+1)||Math.floor(Date.now()/1000);
         // make sure it's even/odd correctly
         if(x.order == 2)
         {
@@ -174,12 +170,18 @@ exports.self = function(args){
         }else{
           if(at % 2 === 0) at++;
         }
-        x.at = at; // cache it and to verify in return sync
+        x._at = at; // cache it and to verify in return sync
       }
+      return x._at;
+    };
+    // always start w/ now by default
+    x.at(Math.floor(Date.now()/1000));
+
+    x.handshake = function(){
       var inner = hashname.toPacket(self.keys,csid);
       delete inner.json[csid]; // is implied here
-      inner.json.at = at;
-      self.debug('handshake generated',at);
+      inner.json.at = x._at;
+      self.debug('handshake generated',x._at);
       return x.encrypt(lob.encode(inner));
     };
     

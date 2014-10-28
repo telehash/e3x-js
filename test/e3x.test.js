@@ -73,11 +73,11 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.handshake();
-    expect(x.at % 2).to.be.equal(x.order?0:1)
+    expect(x._at % 2).to.be.equal(x.order?0:1)
     setTimeout(function(){
       var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
       x.handshake();
-      expect(x.at % 2).to.be.equal(x.order?0:1);
+      expect(x._at % 2).to.be.equal(x.order?0:1);
       done();
     },1000);
   });
@@ -126,32 +126,32 @@ describe('e3x', function(){
     var inner = self.decrypt(handshakeAB);
     var x = self.exchange({csid:'1a',key:inner.body});
     var at = x.sync(handshakeAB,{json:{}});
-    expect(at).to.be.equal(-1);
+    expect(at).to.be.false;
   });
 
   it('be in sync from a handshake', function(){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
     var x = self.exchange({csid:'1a',key:inner.body});
-    x.at = 1409417261; // force this so that it tests accepting the handshake
-    var at = x.sync(handshakeAB,{json:{at:1409417261}});
-    expect(at).to.be.equal(0);
+    x.at(1409417261); // force this so that it tests accepting the handshake
+    var bool = x.sync(handshakeAB,{json:{at:1409417261}});
+    expect(bool).to.be.true;
     // do it twice to make sure it's consistent
-    var at = x.sync(handshakeAB,{json:{at:1409417261}});
-    expect(at).to.be.equal(0);
+    var bool = x.sync(handshakeAB,{json:{at:1409417261}});
+    expect(bool).to.be.true;
   });
 
   it('generate at, cache, and reset it', function(){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
     var x = self.exchange({csid:'1a',key:inner.body});
-    expect(x.at).to.not.exist;
-    var at = x.sync(handshakeAB,{json:{at:1409417262}});
-    expect(x.at).to.be.equal(1409417262);
+    expect(x.at(1)).to.be.a('number');
+    var bool = x.sync(handshakeAB,{json:{at:1409417262}});
+    expect(bool).to.be.false;
+    expect(x._at).to.be.equal(1409417262);
     expect(x.handshake()).to.exist;
-    expect(x.at).to.be.equal(1409417262);
-    expect(x.handshake(true)).to.exist;
-    expect(x.at).to.be.equal(1409417263);
+    expect(x._at).to.be.equal(1409417262);
+    expect(x.at(x.at())).to.be.equal(1409417263);
   });
 
   it('sends a channel packet', function(done){

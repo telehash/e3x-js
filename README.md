@@ -29,9 +29,10 @@ var bool = exchange.verify(message);
 var message = exchange.encrypt(inner);
 
 var inner = exchange.receive(cpacket);
-    
-var seq = exchange.sync(handshake); // does setup stuff, resends or starts timing out channels
-var handshake = exchange.handshake(js);
+
+var at = exchange.at(at); // set the at, or return the current one if none given, will start to timeout channels until in sync
+var bool = exchange.sync(handshake); // processes handshake to do all setup stuff, resends channels if in sync
+var handshake = exchange.handshake(); // returns current handshake to be sent
 
 var channel = exchange.channel(open);
 if(!channel) console.log(exchange.err);
