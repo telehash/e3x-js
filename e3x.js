@@ -204,18 +204,18 @@ exports.self = function(args){
       }
 
       // reliable setup
-      if(open.json.seq === 0)
+      if(open.json.seq === 1)
       {
         chan.reliable = true;
         chan.outq = []; // to keep sent ones until ack'd
-        chan.outSeq = 0; // to set outgoing json.seq
-        chan.outConfirmed = -1; // highest outgoing json.seq that has been ack'd
-        chan.lastAck = -1; // last json.ack that we've sent
+        chan.outSeq = 1; // to set outgoing json.seq
+        chan.outConfirmed = 0; // highest outgoing json.seq that has been ack'd
+        chan.lastAck = 0; // last json.ack that we've sent
       }else{
         chan.reliable = false;
       }
       chan.inq = []; // to order incoming packets for the app
-      chan.inDone = -1; // highest incoming json.seq that has been done
+      chan.inDone = 0; // highest incoming json.seq that has been done
       chan.type = open.json.type;
       chan.id = open.json.c;
       chan.startAt = Date.now();
@@ -313,7 +313,7 @@ exports.self = function(args){
 
         // don't process packets w/o a seq, no batteries included
         var seq = packet.json.seq;
-        if(!(seq >= 0)) return;
+        if(!(seq > 0)) return;
 
         // drop duplicate packets, always force an ack
         if(seq <= chan.inDone || chan.inq[seq-(chan.inDone+1)]) return chan.forceAck = true;

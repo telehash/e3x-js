@@ -2,7 +2,7 @@
   "name": "e3x",
   "description": "End-to-End Encrypted eXchange",
   "homepage": "https://github.com/telehash/e3x-js",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "dependencies": {
     "lob-enc": "git+https://github.com/telehash/lob-enc.git",
     "hashname": "git+https://github.com/telehash/hashname.git",

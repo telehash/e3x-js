@@ -206,7 +206,7 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA);
-    var c = x.channel({json:{c:x.cid(),seq:0,type:'test'}});
+    var c = x.channel({json:{c:x.cid(),seq:1,type:'test'}});
     expect(c.reliable).to.be.true;
     expect(x.channels[c.id]).to.exist;
   });
@@ -245,13 +245,13 @@ describe('e3x', function(){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}});
-    var open = {json:{c:x.cid(),seq:0,type:'test'}};
+    var open = {json:{c:x.cid(),seq:1,type:'test'}};
     var c = x.channel(open);
     c.receiving = function(err, packet, cb){
       expect(err).to.not.exist;
       expect(c.state).to.be.equal('open');
       expect(packet).to.be.an('object');
-      expect(packet.json.seq).to.be.equal(0);
+      expect(packet.json.seq).to.be.equal(1);
       done();
     };
     c.receive(open);
@@ -263,10 +263,10 @@ describe('e3x', function(){
     x.sync(handshakeBA,{json:{}});
     x.sending = function(buf){
       expect(Buffer.isBuffer(buf)).to.be.true;
-      expect(buf.length).to.be.equal(57);
+      expect(buf.length).to.be.equal(65);
       done();
     };
-    var open = {json:{c:x.cid(),seq:0,type:'test'}};
+    var open = {json:{c:x.cid(),seq:1,type:'test'}};
     var c = x.channel(open);
     c.send(open);
   });
