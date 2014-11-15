@@ -49,8 +49,8 @@ channel.receiving = function(err, packet){};
 These are the current [Cipher Sets](https://github.com/telehash/telehash.org/tree/master/v3/e3x/cs) supported by default:
 
 * [cs1a](https://github.com/quartzjer/e3x-cs1a) - node, browser
-* [cs2a](https://github.com/quartzjer/e3x-cs2a) - node, browser
-* [cs3a](https://github.com/quartzjer/e3x-cs3a) - node
+* [cs2a](https://github.com/quartzjer/telehash-cs2a) - node, browser
+* [cs3a](https://github.com/quartzjer/telehash-cs3a) - node
 
 The API to implement a new CS module is just a simplified crypto wrapper:
 
