@@ -263,7 +263,7 @@ describe('e3x', function(){
     x.sync(handshakeBA,{json:{}});
     x.sending = function(buf){
       expect(Buffer.isBuffer(buf)).to.be.true;
-      expect(buf.length).to.be.equal(65);
+      expect(buf.length).to.be.equal(57);
       done();
     };
     var open = {json:{c:x.cid(),seq:1,type:'test'}};

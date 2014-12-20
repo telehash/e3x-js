@@ -282,15 +282,18 @@ exports.self = function(args){
 
         // process any valid newer incoming ack/miss
         var ack = parseInt(packet.json.ack);
-        if(ack > chan.outSeq) return self.debug("bad ack, dropping entirely",chan.outSeq,ack);
+        if(!ack > chan.outSeq) return self.debug("bad ack, dropping entirely",chan.outSeq,ack);
         var miss = Array.isArray(packet.json.miss) ? packet.json.miss : [];
-        if(miss.length > 100) {
-          self.debug("too many misses", miss.length, chan.id, x.id);
-          miss = miss.slice(0,100);
-        }
-        if(miss.length > 0 || ack > chan.lastAck)
+        if(ack && (miss.length > 0 || ack > chan.lastAck))
         {
           self.debug("miss processing",ack,chan.lastAck,miss,chan.outq.length);
+          // calculate the miss ids from the offsets
+          var last = ack;
+          miss = miss.map(function(id){
+            last += id;
+            return last;
+          });
+          if(last != ack) chan.missCap = last; // keep window size around to use for backpressure
           chan.lastAck = ack;
           // rebuild outq, only keeping newer packets, resending any misses
           var outq = chan.outq;
@@ -384,17 +387,24 @@ exports.self = function(args){
         chan.forceAck = false;
 
         // confirm only what's been processed
-        if(chan.inDone >= 0) chan.outConfirmed = packet.json.ack = chan.inDone;
+        if(chan.inDone) chan.outConfirmed = packet.json.ack = chan.inDone;
 
         // calculate misses, if any
         delete packet.json.miss; // when resending packets, make sure no old info slips through
         if(chan.inq.length > 0)
         {
           packet.json.miss = [];
+          // make sure ack is set, edge case
+          if(!packet.json.ack) packet.json.ack = 0;
+          var last = packet.json.ack;
           for(var i = 0; i < chan.inq.length; i++)
           {
-            if(!chan.inq[i]) packet.json.miss.push(chan.inDone+i+1);
+            if(chan.inq[i]) continue;
+            packet.json.miss.push(chan.inq[i].seq - last);
+            last = chan.inq[i].seq;
           }
+          // push current buffer capacity
+          packet.json.miss.push((packet.json.ack+defaults.chan_inbuf) - last);
         }
 
         // now validate and send the packet
