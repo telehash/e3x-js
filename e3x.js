@@ -35,6 +35,7 @@ exports.self = function(args){
   self.keys = {};
   exports.err = undefined;
   Object.keys(csets).forEach(function(csid){
+    if(!args.pairs[csid]) return;
     self.keys[csid] = args.pairs[csid].key;
     self.locals[csid] = new csets[csid].Local(args.pairs[csid]);
     exports.err = exports.err || self.locals[csid].err;

@@ -6,7 +6,8 @@
   "dependencies": {
     "lob-enc": "git+https://github.com/telehash/lob-enc.git",
     "hashname": "git+https://github.com/telehash/hashname.git",
-    "e3x-cs1a": "git+https://github.com/quartzjer/e3x-cs1a.git"
+    "e3x-cs1a": "git+https://github.com/quartzjer/e3x-cs1a.git",
+    "e3x-cs3a": "git+https://github.com/quartzjer/e3x-cs3a.git"
   },
   "devDependencies": {
     "chai": "*",
