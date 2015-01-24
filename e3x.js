@@ -126,6 +126,7 @@ exports.self = function(args){
       if(!handshake) return false;
       if(!inner) inner = self.decrypt(handshake); // optimization to pass one in already done
       if(!inner) return false;
+      if(!x.verify(handshake)) return false;
 
       // create session if needed
       if(!x.session)

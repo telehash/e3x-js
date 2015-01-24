@@ -31,12 +31,13 @@ describe('e3x', function(){
   });
 
   it('should have cipher sets loaded', function(){
-    expect(Object.keys(e3x.cs).length).to.be.equal(2);
+    expect(Object.keys(e3x.cs).length).to.be.equal(3);
   });
 
   it('generates keys', function(done){
     e3x.generate(function(err,pairs){
       expect(err).to.not.exist;
+      console.log("pairs",pairs['1a'].key.length,pairs['2a'].key.length,pairs['3a'].key.length);
       expect(pairs).to.be.an('object');
       expect(Object.keys(pairs).length).to.be.above(0);
       expect(pairs['1a'].key.length).to.be.equal(21);
