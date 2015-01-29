@@ -12,13 +12,29 @@ defaults.chan_inbuf = 50; // how many incoming packets to cache during processin
 var csets = exports.cs = {};
 
 exports.generate = function(cbDone){
-  var pairs = {};
-  var error;
+
+  // figure out which ciphersets have generators first
+  var generators = {};
   Object.keys(csets).forEach(function(csid){
-    csets[csid].generate(function(err,pair){
-      error = error||err;
+    if(!csets[csid] || !csets[csid].generate) return;
+    generators[csid] = csets[csid].generate;
+  });
+  if(!Object.keys(generators).length) return cbDone("no ciphersets");
+
+  // async generate all of them
+  var pairs = {};
+  var errored;  
+  Object.keys(generators).forEach(function(csid){
+    generators[csid](function(err,pair){
+      if(errored) return;
+      if(err)
+      {
+        errored = true;
+        return cbDone(err);
+      }
       pairs[csid] = pair;
-      if(Object.keys(pairs).length == Object.keys(csets).length) return cbDone(error, pairs);
+      // async all done
+      if(Object.keys(pairs).length == Object.keys(generators).length) return cbDone(undefined, pairs);
     });
   });
 }
