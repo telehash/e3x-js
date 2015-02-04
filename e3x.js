@@ -1,6 +1,7 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
 var hashname = require('hashname');
+var cbor = require('cbor');
 
 var defaults = exports.defaults = {};
 defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
@@ -92,7 +93,7 @@ exports.self = function(args){
     }
     if(self.err) return false;
 
-    var x = {csid:csid, key:key, cs:cs, token:cs.token, isExchange:true};
+    var x = {csid:csid, key:key, cs:cs, token:cs.token, isExchange:true, z:0};
     x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
     // get our sort order by compairing the endpoint keys
     x.order = (bufsort(self.keys[csid],key) == key) ? 2 : 1;
@@ -119,9 +120,15 @@ exports.self = function(args){
     x.receive = function(packet){
       if(!lob.isPacket(packet) || packet.head.length !== 0) return (x.err='invalid packet')&&false;
       if(!x.session) return (x.err='handshake sync required')&&false;
-      var inner = x.session.decrypt(packet.body.slice(16));
-      if(!inner) return (x.err='decrypt failed: '+x.session.err)&&false;
-      return lob.decode(inner);
+      var buf = x.session.decrypt(packet.body.slice(16));
+      if(!buf) return (x.err='decrypt failed: '+x.session.err)&&false;
+      if(x.z == 1)
+      {
+        
+      }else{
+        var inner = lob.decode(buf);
+      }
+      return inner;
     };
     
     x.send = function(inner, arg){
@@ -130,6 +137,12 @@ exports.self = function(args){
       if(!x.session) return (x.err='send with no session')&&false;
       if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
       self.debug('channel encrypting',inner.json,inner.body.length);
+      if(x.z == 1)
+      {
+        self.debug('compressing w/ cbor');
+        var zbuf = cbor.encode(inner.json.c);
+        // TODO ...
+      }
       var enc = x.session.encrypt(inner);
       if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
       // use senders token for routing
@@ -150,6 +163,7 @@ exports.self = function(args){
         var session = new csets[csid].Ephemeral(cs, handshake.body);
         if(session.err) return false;
         x.session = session;
+        x.z = parseInt(inner.z);
       }
 
       // make sure theirs is legit, or send a new one
@@ -199,6 +213,7 @@ exports.self = function(args){
       var inner = hashname.toPacket(self.keys,csid);
       delete inner.json[csid]; // is implied here
       inner.json.at = x._at;
+      // TODO add .z = 1
       self.debug('handshake generated',x._at);
       return x.encrypt(lob.encode(inner));
     };
