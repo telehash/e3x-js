@@ -66,7 +66,7 @@ exports.self = function(args){
   {
     if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
     var csid = message.head.toString('hex');
-    if(!csets[csid]) return false;
+    if(!self.locals[csid]) return false;
     var inner = self.locals[csid].decrypt(message.body);
     if(!inner) return false;
     return lob.decode(inner);
