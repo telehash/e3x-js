@@ -269,12 +269,16 @@ exports.self = function(args){
       var delivering = false;
       function deliver()
       {
-        if(delivering) return; // one at a time
-        if(chan.state != "open") return; // paranoid
+        if(delivering) return self.debug('delivering'); // one at a time
+        if(chan.state != "open") return self.debug('not open'); // paranoid
         var packet = chan.inq[0];
         // always force an ack when there's misses yet
-        if(!packet && chan.inq.length > 0) chan.forceAck = true;
-        if(!packet) return;
+        if(!packet && chan.inq.length > 0)
+        {
+          self.debug('packet missing seq',chan.inDone+1);
+          chan.forceAck = true;
+        }
+        if(!packet) return self.debug('no more packets');
         delivering = true;
         // handle incoming ended, eventual cleanup
         if(packet.json.end === true){
@@ -363,7 +367,7 @@ exports.self = function(args){
 
         // stash this seq and process any in sequence, adjust for yacht-based array indicies
         chan.inq[seq-(chan.inDone+1)] = packet;
-        self.debug("INQ",Object.keys(chan.inq),chan.inDone);
+        self.debug("INQ",seq,Object.keys(chan.inq),chan.inDone,chan.startAt);
         deliver();
       }
 
