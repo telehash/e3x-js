@@ -106,6 +106,14 @@ exports.self = function(args){
       cid += 2;
       return ret;
     };
+    
+    // error wrapper
+    x.error = function(err)
+    {
+      x.err = err;
+      self.debug('exchange error',err);
+      return false;
+    }
 
     x.verify = function(message){
       return cs.verify(self.locals[csid], message.body);
@@ -118,10 +126,10 @@ exports.self = function(args){
     };
 
     x.receive = function(packet){
-      if(!lob.isPacket(packet) || packet.head.length !== 0) return (x.err='invalid packet')&&false;
-      if(!x.session) return (x.err='handshake sync required')&&false;
+      if(!lob.isPacket(packet) || packet.head.length !== 0) return x.error('invalid packet');
+      if(!x.session) return x.error('handshake sync required');
       var buf = x.session.decrypt(packet.body.slice(16));
-      if(!buf) return (x.err='decrypt failed: '+x.session.err)&&false;
+      if(!buf) return x.error('decrypt failed: '+x.session.err);
       if(x.z == 1)
       {
         
@@ -132,9 +140,9 @@ exports.self = function(args){
     };
     
     x.send = function(inner, arg){
-      if(typeof inner != 'object') return (x.err='invalid inner packet')&&false;
-      if(!x.sending) return (x.err='send with no sending handler')&&false;
-      if(!x.session) return (x.err='send with no session')&&false;
+      if(typeof inner != 'object') return x.error('invalid inner packet');
+      if(!x.sending) return x.error('send with no sending handler');
+      if(!x.session) return x.error('send with no session');
       if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
       self.debug('channel encrypting',inner.json,inner.body.length);
       if(x.z == 1)
@@ -144,7 +152,7 @@ exports.self = function(args){
         // TODO ...
       }
       var enc = x.session.encrypt(inner);
-      if(!enc) return (x.err='session encryption failed: '+x.session.err)&&false;
+      if(!enc) return x.error('session encryption failed: '+x.session.err);
       // use senders token for routing
       var packet = lob.packet(null,Buffer.concat([x.session.token,enc]))
       if(typeof x.sending == 'function') x.sending(packet, arg);
@@ -157,12 +165,15 @@ exports.self = function(args){
       if(!inner) return false;
       if(!x.verify(handshake)) return false;
 
-      // create session if needed
-      if(!x.session)
+      // create/update session if needed
+      var sid = handshake.slice(0,16).toString('hex'); // stable token bytes
+      if(x.sid != sid)
       {
         var session = new csets[csid].Ephemeral(cs, handshake.body);
-        if(session.err) return false;
+        if(session.err) return x.error('session error: '+session.err);
+        self.debug('new ephemeral');
         x.session = session;
+        x.sid = sid;
         x.z = parseInt(inner.z);
       }
 
@@ -186,8 +197,8 @@ exports.self = function(args){
         var chan = x.channels[id];
         // outgoing channels still opening, resend open
         if(chan.isOut && chan.state == 'opening') chan.send(chan.open);
-        // any open reliable channel, force ack
-        if(chan.state == 'open' && chan.reliable) chan.send({json:{}});
+        // any open reliable channel, trigger ack
+        if(chan.state == 'open' && chan.reliable) chan.ack();
       })
     }
 
@@ -219,11 +230,7 @@ exports.self = function(args){
     };
     
     x.channel = function(open){
-      if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string')
-      {
-        x.err = 'invalid open';
-        return false;
-      }
+      if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string') return x.error('invalid open');
       
       // be friendly
       if(typeof open.json.c != 'number') open.json.c = x.cid();
@@ -392,11 +399,11 @@ exports.self = function(args){
         }
 
         // do reliable tracking
-        packet.json.seq = chan.outSeq++;
+        if(!packet.json.seq) packet.json.seq = chan.outSeq++;
 
         // reset/update tracking stats
         packet.sentAt = Date.now();
-        chan.outq.push(packet);
+        if(chan.outq.indexOf(packet) == -1) chan.outq.push(packet);
 
         // add optional ack/miss and send
         chan.ack(packet);
@@ -446,13 +453,10 @@ exports.self = function(args){
 
         // now validate and send the packet
         packet.json.c = chan.id;
-        self.debug("rel-send",chan.type,JSON.stringify(packet.json));
+        self.debug("rel-send",chan.type,JSON.stringify(packet.json),packet.body&&packet.body.length);
 
-        // TODO handle timeout
-
-        // to auto-ack if it isn't acked
         if(chan.resender) clearTimeout(chan.resender);
-        chan.resender = setTimeout(function(){chan.ack}, defaults.chan_resend);
+        chan.resender = setTimeout(chan.resend, defaults.chan_resend);
 
         return x.send(lob.packet(packet.json,packet.body));
       }
@@ -479,9 +483,10 @@ exports.self = function(args){
           hn.receive({js:{err:"timeout",c:chan.id}});
           return;
         }
-        debug("channel resending");
+        self.debug("channel resending");
         chan.ack(lastpacket);
-        setTimeout(function(){chan.resend()}, defaults.chan_resend); // recurse until chan_timeout
+        // continue until chan_timeout
+        chan.resender = setTimeout(chan.resend, defaults.chan_resend);
       }
 
       // send error immediately, flexible arguments
