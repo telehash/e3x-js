@@ -175,6 +175,10 @@ exports.self = function(args){
         x.session = session;
         x.sid = sid;
         x.z = parseInt(inner.z);
+        // free up any gone channels since id's can be re-used now
+        Object.keys(x.channels).forEach(function(id){
+          if(x.channels[id].state == 'gone') delete x.channels[id];
+        });
       }
 
       // make sure theirs is legit, or send a new one
