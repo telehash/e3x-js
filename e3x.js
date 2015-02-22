@@ -243,7 +243,7 @@ exports.self = function(args){
       
       // stub handler, to be replaced by app
       chan.receiving = function(err, packet, cb){
-        self.debug('no channel receiving handler');
+        self.debug('no channel receiving handler',chan.type,chan.id);
         cb();
       }
 
@@ -252,13 +252,14 @@ exports.self = function(args){
       {
         chan.reliable = true;
         chan.outq = []; // to keep sent ones until ack'd
-        chan.outSeq = 1; // to set outgoing json.seq
+        chan.outSeq = 1; // to set outgoing json.seq 
         chan.outConfirmed = 0; // highest outgoing json.seq that has been ack'd
         chan.lastAck = 0; // last json.ack that we've sent
       }else{
         chan.reliable = false;
+        chan.inSeq = 1;
       }
-      chan.inq = []; // to order incoming packets for the app
+      chan.inq = {}; // to order incoming packets for the app
       chan.inDone = 0; // highest incoming json.seq that has been done
       chan.type = open.json.type;
       chan.id = open.json.c;
@@ -281,15 +282,15 @@ exports.self = function(args){
       function deliver()
       {
         if(delivering) return self.debug('delivering'); // one at a time
-        if(chan.state != "open") return self.debug('not open'); // paranoid
-        var packet = chan.inq[0];
+        var packet = chan.inq[chan.inDone+1];
         // always force an ack when there's misses yet
-        if(!packet && chan.inq.length > 0)
+        if(!packet && Object.keys(chan.inq).length > 0)
         {
           self.debug('packet missing seq',chan.inDone+1);
           chan.forceAck = true;
         }
         if(!packet) return self.debug('no more packets');
+        if(chan.state != "open") return self.debug('no delivery to',chan.state); // paranoid
         delivering = true;
         // handle incoming ended, eventual cleanup
         if(packet.json.end === true){
@@ -298,8 +299,8 @@ exports.self = function(args){
         }
         chan.receiving(null, packet, function(err){
           if(err) return chan.fail(err);
-          chan.inq.shift();
           chan.inDone++;
+          delete chan.inq[chan.inDone];
           chan.ack(); // auto-ack
           delivering = false;
           deliver(); // iterate
@@ -312,7 +313,7 @@ exports.self = function(args){
         // if it's an incoming error, bail hard/fast
         if(packet.json.err)
         {
-          chan.inq = [];
+          chan.inq = {}; // delete all incoming
           chan.err = packet.json.err;
           chan.receiving(chan.err, packet, function(){});
           return cleanup();
@@ -321,10 +322,11 @@ exports.self = function(args){
         chan.recvAt = Date.now();
         if(chan.state == "opening") chan.state = "open";
 
-        // unreliable is easy
+        // unreliable is easy, make our own sequence for the delivery flow
         if(!chan.reliable)
         {
-          chan.inq.push(packet);
+          chan.inq[chan.inSeq] = packet;
+          chan.inSeq++;
           return deliver();
         }
 
@@ -363,11 +365,11 @@ exports.self = function(args){
         }
 
         // don't process packets w/o a seq, no batteries included
-        var seq = packet.json.seq;
+        var seq = parseInt(packet.json.seq);
         if(!(seq > 0)) return;
 
         // drop duplicate packets, always force an ack
-        if(seq <= chan.inDone || chan.inq[seq-(chan.inDone+1)]) return chan.forceAck = true;
+        if(seq <= chan.inDone || chan.inq[seq]) return chan.forceAck = true;
 
         // drop if too far ahead, must ack
         if(seq-chan.inDone > defaults.chan_inbuf)
@@ -376,8 +378,8 @@ exports.self = function(args){
           return chan.forceAck = true;
         }
 
-        // stash this seq and process any in sequence, adjust for yacht-based array indicies
-        chan.inq[seq-(chan.inDone+1)] = packet;
+        // stash this seq and process any in sequence
+        chan.inq[seq] = packet;
         self.debug("INQ",seq,Object.keys(chan.inq),chan.inDone,chan.startAt);
         deliver();
       }
@@ -402,8 +404,9 @@ exports.self = function(args){
           return x.send(lob.packet(packet.json,packet.body));
         }
 
-        // do reliable tracking
-        if(!packet.json.seq) packet.json.seq = chan.outSeq++;
+        // add reliable tracking, make next one is highest
+        if(!packet.json.seq) packet.json.seq = chan.outSeq;
+        if(packet.json.seq >= chan.outSeq) chan.outSeq = packet.json.seq + 1;
 
         // reset/update tracking stats
         packet.sentAt = Date.now();
@@ -439,17 +442,18 @@ exports.self = function(args){
 
         // calculate misses, if any
         delete packet.json.miss; // when resending packets, make sure no old info slips through
-        if(chan.inq.length > 0)
+        var seen = Object.keys(chan.inq).sort(function(a,b){return a-b}); // numeric sort
+        if(seen.length > 0)
         {
           packet.json.miss = [];
           // make sure ack is set, edge case
           if(!packet.json.ack) packet.json.ack = 0;
           var last = packet.json.ack;
-          for(var i = 0; i < chan.inq.length; i++)
+          for(var i = seen[0]; i < seen[seen.length-1]; i++)
           {
             if(chan.inq[i]) continue;
-            packet.json.miss.push(chan.inq[i].seq - last);
-            last = chan.inq[i].seq;
+            packet.json.miss.push(i - last);
+            last = i;
           }
           // push current buffer capacity
           packet.json.miss.push((packet.json.ack+defaults.chan_inbuf) - last);
