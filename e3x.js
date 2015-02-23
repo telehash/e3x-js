@@ -199,10 +199,15 @@ exports.self = function(args){
     x.flush = function(){
       Object.keys(x.channels).forEach(function(id){
         var chan = x.channels[id];
-        // outgoing channels still opening, resend open
-        if(chan.isOut && chan.state == 'opening') chan.send(chan.open);
-        // any open reliable channel, trigger ack
-        if(chan.state == 'open' && chan.reliable) chan.ack();
+        // any open reliable channel, resend outq and trigger ack
+        if(chan.reliable)
+        {
+          chan.outq.forEach(chan.ack);
+          chan.ack();
+        }else{
+          // outgoing unreliable channels still opening, resend open
+          if(chan.isOut && chan.state == 'opening') chan.send(chan.open);
+        }
       })
     }
 
@@ -289,7 +294,12 @@ exports.self = function(args){
           self.debug('packet missing seq',chan.inDone+1);
           chan.forceAck = true;
         }
-        if(!packet) return self.debug('no more packets');
+        if(!packet)
+        {
+          self.debug('no more packets');
+          chan.ack(); // auto-ack anything processed
+          return;
+        }
         if(chan.state != "open") return self.debug('no delivery to',chan.state); // paranoid
         delivering = true;
         // handle incoming ended, eventual cleanup
@@ -477,21 +487,21 @@ exports.self = function(args){
         // TODO reset any active timer
       }
 
-      return chan;
-
       // resend the last sent packet if it wasn't acked
       chan.resend = function()
       {
-        if(chan.ended) return;
+        self.debug("resend check",chan.outq.length,chan.err);
+        if(chan.err) return;
         if(!chan.outq.length) return;
         var lastpacket = chan.outq[chan.outq.length-1];
         // timeout force-end the channel
-        if(Date.now() - lastpacket.sentAt > arg.timeout)
+        var ago = Date.now() - lastpacket.sentAt;
+        if(ago > chan.timeout)
         {
-          hn.receive({js:{err:"timeout",c:chan.id}});
+          if(chan.state != "ended") chan.receive(lob.packet({json:{err:"timeout",c:chan.id}}));
           return;
         }
-        self.debug("channel resending");
+        self.debug("channel resending",ago,chan.timeout);
         chan.ack(lastpacket);
         // continue until chan_timeout
         chan.resender = setTimeout(chan.resend, defaults.chan_resend);
@@ -505,6 +515,8 @@ exports.self = function(args){
         if(typeof arg == "object" && arg.js && arg.js.err) err = arg.js.err;
         chan.send({err:err});
       }
+
+      return chan;
 
     };
     
