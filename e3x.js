@@ -31,7 +31,7 @@ exports.generate = function(cbDone){
       if(err)
       {
         errored = true;
-        return cbDone(err);
+        return cbDone(csid+': '+err);
       }
       pairs[csid] = pair;
       // async all done
