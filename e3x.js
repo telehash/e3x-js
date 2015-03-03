@@ -229,9 +229,15 @@ exports.self = function(args){
     // always start w/ now by default
     x.at(Math.floor(Date.now()/1000));
 
-    x.handshake = function(){
-      var inner = hashname.toPacket(self.keys,csid);
-      delete inner.json[csid]; // is implied here
+    // be handy handshaker
+    x.handshake = function(inner){
+      if(!inner)
+      {
+        // TODO deprecated 
+        inner = hashname.toPacket(self.keys,csid);
+        delete inner.json[csid]; // is implied here
+        inner.json.type = 'key';
+      }
       inner.json.at = x._at;
       // TODO add .z = 1
       self.debug('handshake generated',x._at);

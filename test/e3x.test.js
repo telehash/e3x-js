@@ -89,7 +89,7 @@ describe('e3x', function(){
     var handshake = x.handshake();
 //     console.log('handshakeAB',handshake.toString('hex'));
     expect(lob.isPacket(handshake)).to.be.true;
-    expect(handshake.length).to.be.equal(72);
+    expect(handshake.length).to.be.above(70);
   });
 
   it('generates another handshake', function(){
@@ -98,7 +98,7 @@ describe('e3x', function(){
     var handshake = x.handshake();
 //      console.log('handshakeBA',handshake.toString('hex'));
     expect(lob.isPacket(handshake)).to.be.true;
-    expect(handshake.length).to.be.equal(72);
+    expect(handshake.length).to.be.above(70);
   });
 
   it('decode a handshake', function(){
