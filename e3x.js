@@ -234,7 +234,9 @@ exports.self = function(args){
       if(!inner)
       {
         // TODO deprecated 
-        inner = hashname.toPacket(self.keys,csid);
+        inner = {};
+        inner.body = hashname.key(csid, self.keys);
+        inner.json = hashname.intermediates(self.keys);
         delete inner.json[csid]; // is implied here
         inner.json.type = 'key';
       }
