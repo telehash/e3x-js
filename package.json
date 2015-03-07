@@ -2,7 +2,7 @@
   "name": "e3x",
   "description": "End-to-End Encrypted eXchange",
   "homepage": "https://github.com/telehash/e3x-js",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "dependencies": {
     "cbor": "^0.3.10",
     "e3x-cs1a": "git+https://github.com/quartzjer/e3x-cs1a.git",
