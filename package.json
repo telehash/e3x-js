@@ -29,7 +29,8 @@
   "browser": {
     "ecc": "ecc-jsbn",
     "/ciphers/1a/export.js": "/ciphers/1a/export.browser.js",
-    "/ciphers/2a/export.js": "/ciphers/2a/export.browser.js"
+    "/ciphers/2a/export.js": "/ciphers/2a/export.browser.js",
+    "/ciphers/3a/export.js": "/ciphers/3a/export.browser.js"
   },
   "browserify": {
     "transform": [
