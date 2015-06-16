@@ -104,7 +104,7 @@ describe('e3x', function(){
   it('decode a handshake', function(){
     var self = e3x.self({pairs:pairsB});
     var inner = self.decrypt(handshakeAB);
-    expect(inner).to.be.an('object');
+    expect(Buffer.isBuffer(inner)).to.be.equal(true);
     expect(inner.body.length).to.be.equal(21);
   });
 
