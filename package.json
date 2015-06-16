@@ -10,12 +10,14 @@
     "lob-enc": "git+https://github.com/telehash/lob-enc.git",
     "ecc-jsbn": "0.0.x",
     "sjcl": "1.0.x",
-    "node-forge": "0.6.x"
+    "node-forge": "0.6.x",
+    "tweetnacl": "^0.13.0"
   },
   "optionalDependencies": {
     "ursa": "^0.8.1",
     "ecc": "git+https://github.com/dazoe/ecc.git",
-    "ecc-qj": "git+https://github.com/rynomad/ecc.git"
+    "ecc-qj": "git+https://github.com/rynomad/ecc.git",
+    "sodium": "1.0.x"
   },
   "devDependencies": {
     "chai": "*",
