@@ -6,9 +6,7 @@
   "dependencies": {
     "browserify": "^10.2.4",
     "browserify-shim": "^3.8.8",
-    "cbor": "^0.3.10",
-    "e3x-cs3a": "git+https://github.com/quartzjer/e3x-cs3a.git",
-    "ecc-jsbn": "0.0.x",
+    "ecc-jsbn": "git+https://github.com/rynomad/ecc-jsbn.git",
     "hashname": "git+https://github.com/telehash/hashname.git",
     "lob-enc": "git+https://github.com/telehash/lob-enc.git",
     "node-forge": "0.6.x",
@@ -30,9 +28,11 @@
   },
   "browser": {
     "ecc": "ecc-jsbn",
-    "/ciphers/1a/export.js": "/ciphers/1a/export.browser.js",
-    "/ciphers/2a/export.js": "/ciphers/2a/export.browser.js",
-    "/ciphers/3a/export.js": "/ciphers/3a/export.browser.js"
+    "ecc-qj": "ecc-jsbn",
+    "./ciphers/1a/export.js": "./ciphers/1a/export.browser.js",
+    "./ciphers/2a/export.js": "./ciphers/2a/export.browser.js",
+    "./ciphers/3a/export.js": "./ciphers/3a/export.browser.js",
+    "source-map-support": "./ignore.js"
   },
   "browserify": {
     "transform": [
