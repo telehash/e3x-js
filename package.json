@@ -5,15 +5,16 @@
   "version": "0.1.25",
   "dependencies": {
     "cbor": "^0.3.10",
-    "e3x-cs1a": "git+https://github.com/quartzjer/e3x-cs1a.git",
-    "e3x-cs2a": "git+https://github.com/quartzjer/e3x-cs2a.git",
     "e3x-cs3a": "git+https://github.com/quartzjer/e3x-cs3a.git",
     "hashname": "git+https://github.com/telehash/hashname.git",
     "lob-enc": "git+https://github.com/telehash/lob-enc.git",
-    "ecc-jsbn": "git+https://github.com/quartzjer/ecc-jsbn.git"
+    "ecc-jsbn": "0.0.x",
+    "sjcl": "1.0.x",
+    "node-forge": "0.6.x"
   },
   "optionalDependencies": {
-    "ecc": "git+https://github.com/dazoe/ecc.git"
+    "ursa": "^0.8.1",
+    "ecc": "git+https://github.com/quartzjer/ecc.git"
   },
   "devDependencies": {
     "chai": "*",
@@ -22,10 +23,18 @@
   "scripts": {
     "test": "make test"
   },
-  "browser":{
-    "ecc" :"ecc-jsbn",
-    "/ciphers/1a/export.js": "/ciphers/1a/export.browser.js"
-
+  "browser": {
+    "ecc": "ecc-jsbn",
+    "/ciphers/1a/export.js": "/ciphers/1a/export.browser.js",
+    "/ciphers/2a/export.js": "/ciphers/2a/export.browser.js"
+  },
+  "browserify": {
+    "transform": [
+      "browserify-shim"
+    ]
+  },
+  "browserify-shim": {
+    "./forge.min.js": "forge"
   },
   "keywords": [
     "e3x",
