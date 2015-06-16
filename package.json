@@ -9,7 +9,11 @@
     "e3x-cs2a": "git+https://github.com/quartzjer/e3x-cs2a.git",
     "e3x-cs3a": "git+https://github.com/quartzjer/e3x-cs3a.git",
     "hashname": "git+https://github.com/telehash/hashname.git",
-    "lob-enc": "git+https://github.com/telehash/lob-enc.git"
+    "lob-enc": "git+https://github.com/telehash/lob-enc.git",
+    "ecc-jsbn": "git+https://github.com/quartzjer/ecc-jsbn.git"
+  },
+  "optionalDependencies": {
+    "ecc": "git+https://github.com/dazoe/ecc.git"
   },
   "devDependencies": {
     "chai": "*",
@@ -17,6 +21,11 @@
   },
   "scripts": {
     "test": "make test"
+  },
+  "browser":{
+    "ecc" :"ecc-jsbn",
+    "/ciphers/1a/export.js": "/ciphers/1a/export.browser.js"
+
   },
   "keywords": [
     "e3x",
