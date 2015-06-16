@@ -19,7 +19,7 @@ function h2b(o)
 }
 
 describe('e3x', function(){
-
+  this.timeout(30000)
   // fixtures
   var pairsA = {"1a":h2b({"key":"03a3c4c9f6e081706be52903c75e077f0f3264eda1","secret":"12d2af807dd9cf8e3f99df395fac08dede4de913"})};
   var pairsB = {"1a":h2b({"key":"03fef52613c4dad0614d92cb7331d3e64658e0b8ba","secret":"a1e95d6a1bb247183b2f52f97c174a9fb39905d9"})};
@@ -35,6 +35,7 @@ describe('e3x', function(){
   });
 
   it('generates keys', function(done){
+
     e3x.generate(function(err,pairs){
       expect(err).to.not.exist;
       console.log("pairs",pairs['1a'].key.length,pairs['2a'].key.length,pairs['3a'].key.length);
@@ -69,7 +70,6 @@ describe('e3x', function(){
     expect(x.token.length).to.be.equal(16);
     expect(x.order).to.be.equal(2);
   });
-
   it('does even odd', function(done){
     var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
