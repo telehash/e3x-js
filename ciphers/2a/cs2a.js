@@ -95,7 +95,9 @@ exports.Remote = function(key)
   self.key = {};
   try{
     self.err = exports.loadkey(self.key,key);
-    self.ephemeral = new cecc.ECKey(cecc.ECCurves.secp256r1);
+    var curve = cecc.ECCurves.secp256r1
+    curve.legacy = true;
+    self.ephemeral = new cecc.ECKey(curve);
     self.secret = crypto.randomBytes(32);
     self.iv = crypto.randomBytes(12);
     self.keys = self.key.encrypt(Buffer.concat([self.ephemeral.PublicKey,self.secret]));
@@ -157,7 +159,9 @@ exports.Ephemeral = function(remote, outer, inner)
     var keys = remote.cached || (inner && inner._keys);
 
     // do the ecdh thing
-    var ecc = new cecc.ECKey(cecc.ECCurves.secp256r1, keys.slice(0,65), true);
+    var curve = cecc.ECCurves.secp256r1
+    curve.legacy = true;
+    var ecc = new cecc.ECKey(curve, keys.slice(0,65), true);
     var ecdhe = remote.ephemeral.deriveSharedSecret(ecc);
 
     // use the other two secrets too
