@@ -1,7 +1,7 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
 var hashname = require('hashname');
-var cbor = require('cbor');
+//var cbor = require('cbor');
 
 var defaults = exports.defaults = {};
 defaults.chan_timeout = 10000; // how long before for ending durable channels w/ no acks
@@ -24,7 +24,7 @@ exports.generate = function(cbDone){
 
   // async generate all of them
   var pairs = {};
-  var errored;  
+  var errored;
   Object.keys(generators).forEach(function(csid){
     generators[csid](function(err,pair){
       if(errored) return;
@@ -74,7 +74,7 @@ exports.self = function(args){
 
   self.exchange = function(args)
   {
-    if(typeof args != 'object' || !args.key) 
+    if(typeof args != 'object' || !args.key)
     {
       self.err = 'invalid args';
       return false;
@@ -106,7 +106,7 @@ exports.self = function(args){
       cid += 2;
       return ret;
     };
-    
+
     // error wrapper
     x.error = function(err)
     {
@@ -132,25 +132,27 @@ exports.self = function(args){
       if(!buf) return x.error('decrypt failed: '+x.session.err);
       if(x.z == 1)
       {
-        
+
       }else{
         var inner = lob.decode(buf);
       }
       return inner;
     };
-    
+
     x.send = function(inner, arg){
       if(typeof inner != 'object') return x.error('invalid inner packet');
       if(!x.sending) return x.error('send with no sending handler');
       if(!x.session) return x.error('send with no session');
       if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
       self.debug('channel encrypting',inner.json,inner.body.length);
+      /*
       if(x.z == 1)
       {
         self.debug('compressing w/ cbor');
         var zbuf = cbor.encode(inner.json.c);
         // TODO ...
       }
+      */
       var enc = x.session.encrypt(inner);
       if(!enc) return x.error('session encryption failed: '+x.session.err);
       // use senders token for routing
@@ -190,11 +192,11 @@ exports.self = function(args){
 
       // if they're higher, save it as the best
       if(x._at < inner.json.at) x._at = inner.json.at;
-      
+
       // signal to send a handshake
       return false;
     };
-    
+
     // resend any packets we can
     x.flush = function(){
       Object.keys(x.channels).forEach(function(id){
@@ -233,7 +235,7 @@ exports.self = function(args){
     x.handshake = function(inner){
       if(!inner)
       {
-        // TODO deprecated 
+        // TODO deprecated
         inner = {};
         inner.body = hashname.key(csid, self.keys);
         inner.json = hashname.intermediates(self.keys);
@@ -245,15 +247,15 @@ exports.self = function(args){
       self.debug('handshake generated',x._at);
       return x.encrypt(lob.encode(inner));
     };
-    
+
     x.channel = function(open){
       if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string') return x.error('invalid open');
-      
+
       // be friendly
       if(typeof open.json.c != 'number') open.json.c = x.cid();
 
       var chan = {state:'opening', open:open, isChannel:true};
-      
+
       // stub handler, to be replaced by app
       chan.receiving = function(err, packet, cb){
         self.debug('no channel receiving handler',chan.type,chan.id);
@@ -265,7 +267,7 @@ exports.self = function(args){
       {
         chan.reliable = true;
         chan.outq = []; // to keep sent ones until ack'd
-        chan.outSeq = 1; // to set outgoing json.seq 
+        chan.outSeq = 1; // to set outgoing json.seq
         chan.outConfirmed = 0; // highest outgoing json.seq that has been ack'd
         chan.lastAck = 0; // last json.ack that we've sent
       }else{
@@ -527,7 +529,7 @@ exports.self = function(args){
       return chan;
 
     };
-    
+
     return x;
   }
 
