@@ -1,5 +1,4 @@
 var crypto = require("crypto");
-console.log('sanity')
 // load common module
 exports = module.exports = require('./cs1a.js');
 
