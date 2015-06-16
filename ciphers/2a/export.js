@@ -7,7 +7,7 @@ exports = module.exports = require('./cs2a.js');
 
 try {
   if(process.env.PURE == 'true') throw new Error("pure requested");
-  var ecc = require("ecc");
+  var ecc = require("ecc-qj");
 }catch(E){
   console.log("ecc?", E)
   var ecc = require("ecc-jsbn")
