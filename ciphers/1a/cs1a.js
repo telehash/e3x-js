@@ -58,7 +58,7 @@ exports.Local = function(pair)
     }catch(E){
       return false;
     }
-    
+
     return inner;
   };
 }
@@ -86,7 +86,7 @@ exports.Remote = function(key)
     var iv = body.slice(21,21+4);
     var mac = fold(3,crypto.createHmac("sha256", Buffer.concat([secret,iv])).update(body.slice(0,body.length-4)).digest());
     if(mac.toString('hex') != body.slice(body.length-4).toString('hex')) return false;
-    
+
     return true;
   };
 
@@ -127,7 +127,7 @@ exports.Remote = function(key)
 exports.Ephemeral = function(remote, body)
 {
   var self = this;
-  
+
   self.seq = crypto.randomBytes(4).readUInt32LE(0); // start from random place
 
   try{
@@ -198,7 +198,6 @@ function fold(count, buf)
 {
   if(!count || buf.length % 2) return buf;
   var ret = buf.slice(0,buf.length/2);
-  for(i = 0; i < ret.length; i++) ret[i] = ret[i] ^ buf[i+ret.length];
+  for(var i = 0; i < ret.length; i++) ret[i] = ret[i] ^ buf[i+ret.length];
   return fold(count-1,ret);
 }
-
