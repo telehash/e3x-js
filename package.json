@@ -21,6 +21,9 @@
   },
   "devDependencies": {
     "chai": "*",
+    "chext": "0.0.1",
+    "gulp": "^3.9.0",
+    "gulp-mocha": "^2.1.2",
     "mocha": "*"
   },
   "scripts": {
