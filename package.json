@@ -24,6 +24,7 @@
     "chext": "0.0.1",
     "gulp": "^3.9.0",
     "gulp-mocha": "^2.1.2",
+    "gulp-watch": "^4.2.4",
     "mocha": "*"
   },
   "scripts": {
