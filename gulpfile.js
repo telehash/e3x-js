@@ -17,14 +17,14 @@ gulp.task('mocha', function() {
               });
 });
 
-gulp.task('dev', ['mocha'], function() {
+gulp.task('dev', function() {
   var ch = new chext()
 
   ch.watchify(unitTests)
 
-  ch.on("testing_complete",function(results){
+  ch.onresults = function(results){
     console.log("tests complete", results)
-  })
+  }
 
   gulp.watch(unitTests.concat(srcFiles), ["mocha"])
 })
