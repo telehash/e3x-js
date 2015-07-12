@@ -1,18 +1,30 @@
-var crypto = require('crypto');
+var subtle = crypto.subtle;
+var NodeCrypto = require('crypto');
 
+
+var Subtle_Options = {
+  HMAC: {
+    name: "HMAC"
+    , hash: {name: "SHA-256"}
+    , usage: ["sign","verify"]
+    , extractable : false
+  }
+
+                }
 exports.id = '1a';
 
 // env-specific crypto methods
 exports.crypt = function(ecc,aes)
 {
-  crypto.ecc = ecc;
-  crypto.aes = aes;
+  NodeCrypto.ecc = ecc;
+  NodeCrypto.aes = aes;
 }
 
 exports.generate = function(cb)
 {
+
   try {
-    var k = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1);
+    var k = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1);
   }catch(E){
     return cb(E);
   }
@@ -23,8 +35,8 @@ exports.Local = function(pair)
 {
   var self = this;
   try{
-    self.key = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1, pair.key, true);
-    self.secret = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1, pair.secret);
+    self.key = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, pair.key, true);
+    self.secret = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, pair.secret);
     if(self.key.PublicKey.toString() != pair.key.toString()) throw new Error('invalid public key data');
     if(self.secret.PrivateKey.toString() != pair.secret.toString()) throw new Error('invalid secret key data');
   }catch(E){
@@ -42,19 +54,19 @@ exports.Local = function(pair)
     // mac is handled during verify stage
 
     try{
-      var ephemeral = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1, keybuf, true);
+      var ephemeral = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, keybuf, true);
       var secret = self.secret.deriveSharedSecret(ephemeral);
     }catch(E){
       return false;
     }
 
-    var key = fold(1,crypto.createHash("sha256").update(secret).digest());
+    var key = fold(1,NodeCrypto.createHash("sha256").update(secret).digest());
     var ivz = new Buffer(12);
     ivz.fill(0);
 
     // aes-128 decipher the inner
     try{
-      var inner = crypto.aes(false, key, Buffer.concat([iv,ivz]), innerc);
+      var inner = NodeCrypto.aes(false, key, Buffer.concat([iv,ivz]), innerc);
     }catch(E){
       return false;
     }
@@ -67,12 +79,33 @@ exports.Remote = function(key)
 {
   var self = this;
   try{
-    self.endpoint = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1, key, true);
-    self.ephemeral = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1);
-    self.token = crypto.createHash('sha256').update(self.ephemeral.PublicKey.slice(0,16)).digest().slice(0,16);
-    self.seq = crypto.randomBytes(4).readUInt32LE(0); // start from random place
+    self.endpoint = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, key, true);
+    self.ephemeral = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1);
+    self.token = NodeCrypto.createHash('sha256').update(self.ephemeral.PublicKey.slice(0,16)).digest().slice(0,16);
+    self.seq = NodeCrypto.randomBytes(4).readUInt32LE(0); // start from random place
   }catch(E){
     self.err = E;
+  }
+
+  self._verify = function(local, body){
+
+      if(!Buffer.isBuffer(body))
+        return Promise.reject(new Error("CS1a verify: 2nd argument not a Buffer"));
+
+      // derive shared secret from both identity keys
+      var secret = local.secret.deriveSharedSecret(self.endpoint);
+
+      // hmac key is the secret and seq bytes combined to make it unique each time
+      var iv = body.slice(21,21+4);
+    return subtle.importKey("raw",Buffer.concat([secret,iv]),Subtle_Options.HMAC,  true, Subtle_Options.HMAC.usage)
+          .then(function(key){
+            return crypto.subtle.sign({name:"HMAC"}, key, body.slice(0,body.length-4))
+          })
+          .then(function(sig){
+            var mac = fold(3,new Buffer(new Uint8Array(sig)));
+            var passed = (mac.toString('hex') === body.slice(body.length-4).toString('hex'));
+            return (passed) ? true : Promise.reject();
+          })
   }
 
   // verifies the hmac on an incoming message body
@@ -84,7 +117,11 @@ exports.Remote = function(key)
 
     // hmac key is the secret and seq bytes combined to make it unique each time
     var iv = body.slice(21,21+4);
-    var mac = fold(3,crypto.createHmac("sha256", Buffer.concat([secret,iv])).update(body.slice(0,body.length-4)).digest());
+    var dig = NodeCrypto.createHmac("sha256", Buffer.concat([secret,iv])).update(body.slice(0,body.length-4)).digest();
+    var mac = fold(3,dig)
+
+
+
     if(mac.toString('hex') != body.slice(body.length-4).toString('hex')) return false;
 
     return true;
@@ -99,7 +136,7 @@ exports.Remote = function(key)
     }catch(E){
       return false;
     }
-    var key = fold(1,crypto.createHash("sha256").update(secret).digest());
+    var key = fold(1,NodeCrypto.createHash("sha256").update(secret).digest());
     var iv = new Buffer(4);
     iv.writeUInt32LE(self.seq++,0);
     var ivz = new Buffer(12);
@@ -107,7 +144,7 @@ exports.Remote = function(key)
 
     // encrypt the inner
     try{
-      var innerc = crypto.aes(true, key, Buffer.concat([iv,ivz]), inner);
+      var innerc = NodeCrypto.aes(true, key, Buffer.concat([iv,ivz]), inner);
       var macsecret = local.secret.deriveSharedSecret(self.endpoint);
     }catch(E){
       return false;
@@ -116,7 +153,7 @@ exports.Remote = function(key)
     // prepend the key and hmac it
     var macd = Buffer.concat([self.ephemeral.PublicKey,iv,innerc]);
     // key is the secret and seq bytes combined
-    var hmac = fold(3,crypto.createHmac("sha256", Buffer.concat([macsecret,iv])).update(macd).digest());
+    var hmac = fold(3,NodeCrypto.createHmac("sha256", Buffer.concat([macsecret,iv])).update(macd).digest());
 
     // create final message body
     return Buffer.concat([macd,hmac]);
@@ -128,23 +165,23 @@ exports.Ephemeral = function(remote, body)
 {
   var self = this;
 
-  self.seq = crypto.randomBytes(4).readUInt32LE(0); // start from random place
+  self.seq = NodeCrypto.randomBytes(4).readUInt32LE(0); // start from random place
 
   try{
     // sender token
-    self.token = crypto.createHash('sha256').update(body.slice(0,16)).digest().slice(0,16);
+    self.token = NodeCrypto.createHash('sha256').update(body.slice(0,16)).digest().slice(0,16);
 
     // extract received ephemeral key
-    var key = new crypto.ecc.ECKey(crypto.ecc.ECCurves.secp160r1, body.slice(0,21), true);
+    var key = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, body.slice(0,21), true);
 
     // get shared secret to make channel keys
     var secret = remote.ephemeral.deriveSharedSecret(key);
-    self.encKey = fold(1,crypto.createHash("sha256")
+    self.encKey = fold(1,NodeCrypto.createHash("sha256")
       .update(secret)
       .update(remote.ephemeral.PublicKey)
       .update(key.PublicKey)
       .digest());
-    self.decKey = fold(1,crypto.createHash("sha256")
+    self.decKey = fold(1,NodeCrypto.createHash("sha256")
       .update(secret)
       .update(key.PublicKey)
       .update(remote.ephemeral.PublicKey)
@@ -161,14 +198,14 @@ exports.Ephemeral = function(remote, body)
 
     // validate the hmac
     var key = Buffer.concat([self.decKey,seq]);
-    var mac2 = fold(3,crypto.createHmac("sha256", key).update(cbody).digest());
+    var mac2 = fold(3,NodeCrypto.createHmac("sha256", key).update(cbody).digest());
     if(mac1.toString('hex') != mac2.toString('hex')) return false;
 
     // decrypt body
     var ivz = new Buffer(12);
     ivz.fill(0);
     try{
-      var body = crypto.aes(false,self.decKey,Buffer.concat([seq,ivz]),cbody);
+      var body = NodeCrypto.aes(false,self.decKey,Buffer.concat([seq,ivz]),cbody);
     }catch(E){
       return false;
     }
@@ -181,11 +218,11 @@ exports.Ephemeral = function(remote, body)
     iv.fill(0);
     iv.writeUInt32LE(self.seq++,0);
 
-    var cbody = crypto.aes(true, self.encKey, iv, inner);
+    var cbody = NodeCrypto.aes(true, self.encKey, iv, inner);
 
     // create the hmac
     var key = Buffer.concat([self.encKey,iv.slice(0,4)]);
-    var mac = fold(3,crypto.createHmac("sha256", key).update(cbody).digest());
+    var mac = fold(3,NodeCrypto.createHmac("sha256", key).update(cbody).digest());
 
     // return final body
     return Buffer.concat([iv.slice(0,4),cbody,mac]);

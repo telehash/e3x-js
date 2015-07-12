@@ -82,11 +82,17 @@ describe('cs1a', function(){
 //    console.log("mbodyBA",message.toString('hex'));
   });
 
-  it('should remote verify', function(){
+  it('should remote verify', function(done){
     var local = new cs1a.Local(pairB);
     var remote = new cs1a.Remote(pairA.key);
     var bool = remote.verify(local, mbodyAB);
+
     expect(bool).to.be.equal(true);
+    remote._verify(local,mbodyAB)
+          .then(function(){
+            done();
+          })
+          .catch(console.log.bind(console));
   });
 
   it('should dynamically encrypt, decrypt, and verify', function(){
