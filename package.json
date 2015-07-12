@@ -22,10 +22,13 @@
   "devDependencies": {
     "chai": "*",
     "chext": "0.0.1",
+    "glob": "^5.0.13",
     "gulp": "^3.9.0",
+    "gulp-jsdoc": "^0.1.4",
     "gulp-mocha": "^2.1.2",
     "gulp-watch": "^4.2.4",
-    "mocha": "*"
+    "mocha": "*",
+    "plato": "^1.5.0"
   },
   "scripts": {
     "test": "make test"
