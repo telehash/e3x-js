@@ -1,6 +1,7 @@
 var crypto = require('crypto');
 var lob = require('lob-enc');
 var hashname = require('hashname');
+var debug = require('debug')("E3X")
 //var cbor = require('cbor');
 
 var defaults = exports.defaults = {};
@@ -60,8 +61,7 @@ exports.self = function(args){
   if(exports.err) return false;
 
   // utilities
-  self.debug = args.debug||function(){console.log.apply(console, arguments);};
-
+  self.debug = debug;
   self.decrypt = function(message)
   {
     if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
