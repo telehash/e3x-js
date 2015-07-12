@@ -1,4 +1,4 @@
-var crypto = require("crypto");
+var NodeCrypto = require("crypto");
 var sjcl = require("sjcl");
 
 exports.id = '2a';
@@ -10,6 +10,61 @@ exports.crypt = function(ecc,f)
 {
   cecc = ecc;
   forge = f;
+}
+var rsa_alg = {
+  name: "RSA-OAEP"
+  , hash: {name: "SHA-256"}
+  , modulusLength:2048
+  , publicExponent : new Uint8Array([0x01,0x00,0x01])
+};
+exports._generate = function(){
+
+  var usage = ["encrypt","decrypt"];
+  var extractable = true;
+  return crypto.subtle.generateKey(rsa_alg, extractable, usage)
+        .then(function(pair){
+          return Promise.all([
+              crypto.subtle.exportKey("jwk",pair.privateKey)
+              , crypto.subtle.exportKey("jwk",pair.publicKey)
+            ]);
+        }).then(function(jwks){
+          return {
+            key: jwks[0]
+            , secret : jwks[1]
+          };
+        });
+}
+
+function attachEncrypt(private){
+  id.
+}
+exports._loadKey = function(id, key, secret){
+  var pk = forge.pki.publicKeyFromAsn1(forge.asn1.fromDer(key.toString("binary")));
+
+  function privateHandler(private){
+    id.sign = function(buf){
+      return crypto.subtle.sign()
+    }
+    id.decrypt = function(buf){
+      return crypto.subtle.verify()
+    }
+  }
+
+  function publicHandler(public){
+    id.encrypt = function(buf){
+      return crypto.subtle.encrypt()
+    }
+    id.verify = function(a,b){
+      return crypto.subtle.verify()
+    }
+    return id;
+  }
+  var importer = (secret) ? crypto.subtle.importKey("jwk", secret, rsa_alg, false, ["decrypt"]).then(secretHandler)
+                          : Promise.resolve()
+
+  return importer.then(function(){
+    return crypto.subtle.importKey("jwk", key, rsa_alg, false, ["encrypt"])
+  }).then(publicHandler);
 }
 
 exports.generate = function(cb)
@@ -74,6 +129,7 @@ exports.Local = function(pair)
     var cbodyhex = body.slice(256+12).toString('hex');
 
     var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(keyhex));
+
     var iv = sjcl.codec.hex.toBits(ivhex);
     var aad = sjcl.codec.hex.toBits(aadhex);
     var cbody = sjcl.codec.hex.toBits(cbodyhex);
@@ -98,10 +154,10 @@ exports.Remote = function(key)
     var curve = cecc.ECCurves.secp256r1
     curve.legacy = true;
     self.ephemeral = new cecc.ECKey(curve);
-    self.secret = crypto.randomBytes(32);
-    self.iv = crypto.randomBytes(12);
+    self.secret = NodeCrypto.randomBytes(32);
+    self.iv = NodeCrypto.randomBytes(12);
     self.keys = self.key.encrypt(Buffer.concat([self.ephemeral.PublicKey,self.secret]));
-    self.token = crypto.createHash('sha256').update(self.keys.slice(0,16)).digest().slice(0,16);
+    self.token = NodeCrypto.createHash('sha256').update(self.keys.slice(0,16)).digest().slice(0,16);
   }catch(E){
     self.err = E;
   }
@@ -166,22 +222,22 @@ exports.Ephemeral = function(remote, outer, inner)
 
     // use the other two secrets too
     var secret = keys.slice(65);
-    var hex = crypto.createHash("sha256")
+    var hex = NodeCrypto.createHash("sha256")
       .update(ecdhe)
       .update(remote.secret)
       .update(secret)
       .digest("hex");
     self.encKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(hex));
-    var hex = crypto.createHash("sha256")
+    var hex = NodeCrypto.createHash("sha256")
       .update(ecdhe)
       .update(secret)
       .update(remote.secret)
       .digest("hex");
     self.decKey = new sjcl.cipher.aes(sjcl.codec.hex.toBits(hex));
 
-    self.token = crypto.createHash('sha256').update(outer.slice(0,16)).digest().slice(0,16);
+    self.token = NodeCrypto.createHash('sha256').update(outer.slice(0,16)).digest().slice(0,16);
 
-    self.iv = crypto.randomBytes(12);
+    self.iv = NodeCrypto.randomBytes(12);
 
   }catch(E){
     self.err = E;
