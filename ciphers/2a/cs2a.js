@@ -29,8 +29,8 @@ exports._generate = function(){
             ]);
         }).then(function(jwks){
           return {
-            key: jwks[1]
-            , secret : jwks[0]
+            key: Bufferize(jwks[1])
+            , secret : Bufferize(jwks[0])
           };
         });
 }
@@ -73,8 +73,13 @@ exports._loadkey = function(id, key, secret){
     }
     return id;
   }
-
   console.log("secret", secret)
+  //WOOOOOOOO!!!
+  var pkcsPad1  = new Buffer([48, 130])
+  var off1 = new Buffer([Math.floor(secret.length / 256),((secret.length + 22) % 256) ])
+  var pkcsPad2  = new Buffer([2, 1, 0, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 4, 130])
+  var off2 = new Buffer([Math.floor(secret.length / 256), (secret.length % 256)])
+  secret = Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, secret])
   var importer = (secret) ? Promise.all([
                               crypto.subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-256"}}, false, ["decrypt"])
                               ,crypto.subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])

@@ -108,8 +108,9 @@ describe('cs2a', function(){
   });
 
   it('should dynamically encrypt, decrypt, and verify', function(done){
-    var local = new cs2a._Local(pair_A);
-    var remote = new cs2a._Remote(pair_B.key);
+    console.log(pairA, pair_A)
+    var local = new cs2a._Local(pairA);
+    var remote = new cs2a._Remote(pairB.key);
     var inner = new Buffer('4242','hex');
     var outer;
     Promise.all([local,remote])
@@ -123,8 +124,8 @@ describe('cs2a', function(){
              console.log("encrypt?", outerr)
              outer = outerr;
 
-             var local2 = new cs2a._Local(pair_B);
-             var remote2 = new cs2a._Remote(pair_A.key);
+             var local2 = new cs2a._Local(pairB);
+             var remote2 = new cs2a._Remote(pairA.key);
              return Promise.all([local2, remote2])
            })
            .then(function(pair){
