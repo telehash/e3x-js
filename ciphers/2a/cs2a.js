@@ -75,16 +75,19 @@ exports._loadkey = function(id, key, secret){
   }
   console.log("secret", secret)
   //WOOOOOOOO!!!
-  var pkcsPad1  = new Buffer([48, 130])
-  var off1 = new Buffer([Math.floor(secret.length / 256),((secret.length + 22) % 256) ])
-  var pkcsPad2  = new Buffer([2, 1, 0, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 4, 130])
-  var off2 = new Buffer([Math.floor(secret.length / 256), (secret.length % 256)])
-  secret = Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, secret])
-  var importer = (secret) ? Promise.all([
-                              crypto.subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-256"}}, false, ["decrypt"])
-                              ,crypto.subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])
-                            ]).then(privateHandler)
-                          : Promise.resolve();
+  if (secret){
+    var pkcsPad1  = new Buffer([48, 130])
+    var off1 = new Buffer([Math.floor(secret.length / 256),((secret.length + 22) % 256) ])
+    var pkcsPad2  = new Buffer([2, 1, 0, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 4, 130])
+    var off2 = new Buffer([Math.floor(secret.length / 256), (secret.length % 256)])
+    secret = Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, secret])
+    var importer = Promise.all([
+                          crypto.subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-256"}}, false, ["decrypt"])
+                          ,crypto.subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])
+                        ]).then(privateHandler)
+  }
+  else
+    importer = Promise.resolve();
 
   return importer.then(function(){
     return Promise.all([
@@ -143,38 +146,37 @@ exports._Local = function(pair){
          .then(function(key){
            self.key = key;
            console.log("_local loadkey")
+
            self.decrypt = function(body){
              console.log("buffer.isBuffer", Buffer.isBuffer(body), body.length)
              if(!Buffer.isBuffer(body)) return false;
              if(body.length < 256+12+256+16) return false;
              console.log("BODY", body)
              var b = body
-
              // rsa decrypt the keys
              return self.key.decrypt(body.slice(0,256))
                  .then(function(keys){
                    if(!keys || keys.length != (65+32)) return false;
                    var body = b;
-                   // aes decrypt the inner
-                   var keyhex = keys.slice(65,65+32).toString('hex');
-                   var ivhex = body.slice(256,256+12).toString('hex');
-                   var aadhex = body.slice(0,256).toString('hex');
-                   var cbodyhex = body.slice(256+12).toString('hex');
+                   var alg = { name: "AES-GCM"
+                    , tagLength: 128
+                    , iv : body.slice(256,256+12)
+                    , additionalData: body.slice(0,256)
+                    };
+                    return crypto.subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
+                          .then(function(key){
+                            return crypto.subtle.decrypt(alg, key, body.slice(256+12))
+                          })
+                          .then(function(body){
+                            console.log("decrypt", body)
 
-                   var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(keyhex));
-
-                   var iv = sjcl.codec.hex.toBits(ivhex);
-                   var aad = sjcl.codec.hex.toBits(aadhex);
-                   var cbody = sjcl.codec.hex.toBits(cbodyhex);
-                   var cipher = sjcl.mode.gcm.decrypt(key, cbody, iv, aad, 128);
-                   var body = new Buffer(sjcl.codec.hex.fromBits(cipher), 'hex');
-
-                   // return buf of just the inner, add decrypted sig/keys
-                   var ret = body.slice(0,body.length-256);
-                   ret._keys = keys;
-                   ret._sig = body.slice(ret.length);
-
-                   return ret;
+                            var b = new Buffer(new Uint8Array(body))
+                            console.log(b)
+                            var ret = b.slice(0,b.length-256);
+                            ret._keys = keys;
+                            ret._sig = body.slice(ret.length);
+                            return ret;
+                          })
                  });
 
            };
@@ -194,7 +196,7 @@ exports.Local = function(pair)
     self.err = E;
   }
 
-  // decrypt message body and return the inner
+  // decrypt message body and return, the inner
   self.decrypt = function(body){
     if(!Buffer.isBuffer(body)) return false;
     if(body.length < 256+12+256+16) return false;
