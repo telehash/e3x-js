@@ -98,10 +98,6 @@ exports._loadkey = function(id, key, secret){
        ,crypto.subtle.importKey("spki", key, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["verify"])
     ]);
   }).then(publicHandler)
-    .catch(function(er){
-      console.log("loadkey er", er)
-      console.log(er)
-    });
 }
 
 exports.generate = function(cb)
