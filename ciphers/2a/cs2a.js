@@ -143,6 +143,8 @@ exports.loadkey = function(id, key, secret)
 }
 
 exports._Local = function(pair){
+  if (!(pair && pair.key && pair.secret))
+    return Promise.reject(new Error("must supply valid keypair"))
   var self = this;
   self.key = {};
   return exports._loadkey(self.key,pair.key,pair.secret)
