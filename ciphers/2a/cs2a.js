@@ -48,12 +48,12 @@ exports._loadkey = function(id, key, secret){
     id.sign = function(buf){
       console.log("loadkey sign", ssa)
       return crypto.subtle.sign({name: "RSASSA-PKCS1-v1_5"}, ssa, buf)
-                   .then(Bufferize)
+                   .then(Bufferize).catch(function(e){console.log("sign err",e)});
     }
     id.decrypt = function(buf){
-      console.log("loadkey decrypt", oaep)
-      return crypto.subtle.decrypt({name: "RSA-OAEP"}, oaep, buf)
-                   .then(Bufferize)
+      console.log("loadkey decrypt", oaep, buf)
+      return crypto.subtle.decrypt({name: "RSA-OAEP",hash:{name:"SHA-1"}}, oaep, buf)
+                   .then(Bufferize).catch(function(e){console.log("decrypt err",e)});
     }
   }
 
@@ -65,11 +65,14 @@ exports._loadkey = function(id, key, secret){
     id.encrypt = function(buf){
       console.log("loadkey encrypt", oaep)
       return crypto.subtle.encrypt({name: "RSA-OAEP"}, oaep, buf)
-                   .then(Bufferize);
+                   .then(Bufferize).catch(function(e){console.log("encrypt err",e)});
     }
     id.verify = function(a,b){
-      console.log("loadKey verify", ssa)
+      console.log("loadKey verify", ssa, a, b)
       return crypto.subtle.verify({name: "RSASSA-PKCS1-v1_5"}, ssa, b, a)
+      .catch(function(e){
+        console.log("verify err",e)
+      })
     }
     return id;
   }
@@ -82,7 +85,7 @@ exports._loadkey = function(id, key, secret){
     var off2 = new Buffer([Math.floor(secret.length / 256), (secret.length % 256)])
     secret = Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, secret])
     var importer = Promise.all([
-                          crypto.subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-256"}}, false, ["decrypt"])
+                          crypto.subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["decrypt"])
                           ,crypto.subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])
                         ]).then(privateHandler)
   }
@@ -91,7 +94,7 @@ exports._loadkey = function(id, key, secret){
 
   return importer.then(function(){
     return Promise.all([
-      crypto.subtle.importKey("spki", key, {name: "RSA-OAEP", hash: {name: "SHA-256"}}, false, ["encrypt"])
+      crypto.subtle.importKey("spki", key, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["encrypt"])
        ,crypto.subtle.importKey("spki", key, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["verify"])
     ]);
   }).then(publicHandler)
@@ -142,20 +145,20 @@ exports.loadkey = function(id, key, secret)
 exports._Local = function(pair){
   var self = this;
   self.key = {};
-  return exports._loadkey({},pair.key,pair.secret)
+  return exports._loadkey(self.key,pair.key,pair.secret)
          .then(function(key){
            self.key = key;
            console.log("_local loadkey")
 
            self.decrypt = function(body){
-             console.log("buffer.isBuffer", Buffer.isBuffer(body), body.length)
+             console.log("buffer.isBuffer", Buffer.isBuffer(body), (body.length < 256+12+256+16))
              if(!Buffer.isBuffer(body)) return false;
              if(body.length < 256+12+256+16) return false;
-             console.log("BODY", body)
              var b = body
              // rsa decrypt the keys
-             return self.key.decrypt(body.slice(0,256))
+             return self.key.decrypt(b.slice(0,256))
                  .then(function(keys){
+                   console.log("keys",keys)
                    if(!keys || keys.length != (65+32)) return false;
                    var body = b;
                    var alg = { name: "AES-GCM"
@@ -163,6 +166,8 @@ exports._Local = function(pair){
                     , iv : body.slice(256,256+12)
                     , additionalData: body.slice(0,256)
                     };
+
+                    console.log("decrypt keys")
                     return crypto.subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
                           .then(function(key){
                             return crypto.subtle.decrypt(alg, key, body.slice(256+12))
@@ -174,7 +179,7 @@ exports._Local = function(pair){
                             console.log(b)
                             var ret = b.slice(0,b.length-256);
                             ret._keys = keys;
-                            ret._sig = body.slice(ret.length);
+                            ret._sig = b.slice(ret.length);
                             return ret;
                           })
                  });
@@ -232,68 +237,86 @@ exports._Remote = function(key)
   var curve = cecc.ECCurves.secp256r1
   curve.legacy = true;
   self.ephemeral = new cecc.ECKey(curve);
-  self.secret = NodeCrypto.randomBytes(32);
-  self.iv = NodeCrypto.randomBytes(12);
+  self.secret = crypto.getRandomValues(new Buffer(32))
+  self.iv = crypto.getRandomValues(new Buffer(12))
+  var alg = {
+    name: "AES-GCM"
+    , tagLength : 128
+    , length : 256
+    , iv : self.iv
+  }
   // verifies the authenticity of an incoming message body
+  return crypto.subtle.importKey("raw", self.secret,alg, false,["encrypt","decrypt"] ).then(function(aeskey){
+    return exports._loadkey({},key)
+           .then(function(key){
+             console.log("_")
+             self.key = key;
+             return self.key.encrypt(Buffer.concat([self.ephemeral.PublicKey,self.secret]))
+                 .then(function(keys){
+                   self.keys = new Buffer(new Uint8Array(keys));
+                   alg.additionalData = self.keys;
+                   self.token = NodeCrypto.createHash('sha256').update(self.keys.slice(0,16)).digest().slice(0,16);
+                   console.log("_Remote loadkey")
+                   self.verify = function(local, body){
+                     console.log(local,body,"VERIFY begin")
+                     if(!Buffer.isBuffer(body)) return false;
 
-  return exports._loadkey({},key)
-         .then(function(key){
-           console.log("_")
-           self.key = key;
-           return self.key.encrypt(Buffer.concat([self.ephemeral.PublicKey,self.secret]))
-               .then(function(keys){
-                 self.keys = keys;
-                 self.token = NodeCrypto.createHash('sha256').update(self.keys.slice(0,16)).digest().slice(0,16);
-                 console.log("_Remote loadkey")
-                 self.verify = function(local, body){
-                   if(!Buffer.isBuffer(body)) return false;
+                     // decrypt it first
+                     return local.decrypt(new Buffer(body))
+                          .then(function(inner){
+                            console.log("decrypted body",inner)
+                            if(!inner) return false;
 
-                   // decrypt it first
-                   return local.decrypt(body)
-                        .then(function(inner){
-                          if(!inner) return false;
+                            console.log(inner, inner._sig)
 
-                          // verify the rsa signature
-                          return key.verify(Buffer.concat([body.slice(0,256+12),inner]), inner._sig)
-                                    .then(function(verified){
-                                      if (verified)
-                                        self.cached = inner._keys;
-                                      return verified;
-                                    })
-                        });
+                            // verify the rsa signature
+                            return key.verify(Buffer.concat([body.slice(0,256+12),inner]), inner._sig)
+                                      .then(function(verified){
+                                        console.log("verifieds?", verified)
+                                        if (verified)
+                                          self.cached = inner._keys;
+                                        return verified;
+                                      })
+                          });
 
-                 };
+                   };
 
-                 self.encrypt = function(local, inner){
-                   if(!Buffer.isBuffer(inner)) return false;
+                   self.encrypt = function(local, inner){
+                     if(!Buffer.isBuffer(inner)) return false;
 
-                   // increment the IV
-                   var seq = self.iv.readUInt32LE(0);
-                   seq++;
-                   self.iv.writeUInt32LE(seq,0);
+                     // increment the IV
+                     var seq = self.iv.readUInt32LE(0);
+                     seq++;
+                     self.iv.writeUInt32LE(seq,0);
+                     console.log('self.iv', self.iv)
+                     alg.iv = self.iv;
 
-                   // generate the signature
-                   return local.key.sign(Buffer.concat([self.keys,self.iv,inner]))
-                        .then(function(sig){
-                         // aes gcm encrypt the inner+sig
-                         var aad = self.keys;
-                         var body = Buffer.concat([inner,sig]);
-                         var key = new sjcl.cipher.aes(sjcl.codec.hex.toBits(self.secret.toString('hex')));
-                         var iv = sjcl.codec.hex.toBits(self.iv.toString('hex'));
-                         var cipher = sjcl.mode.gcm.encrypt(key, sjcl.codec.hex.toBits(body.toString('hex')), iv, sjcl.codec.hex.toBits(aad.toString('hex')), 128);
-                         var cbody = new Buffer(sjcl.codec.hex.fromBits(cipher), 'hex');
+                     // generate the signature
+                     return local.key.sign(Buffer.concat([self.keys,self.iv,inner]))
+                          .then(function(sig){
 
-                         // all done!
-                         return Buffer.concat([self.keys,self.iv,cbody]);
-                       });
+                           // aes gcm encrypt the inner+sig
+                           var body = Buffer.concat([inner, new Buffer(new Uint8Array(sig))])
+                           return crypto.subtle.encrypt(alg,aeskey, body)
+                             .then(function(crypted){
+                               var cbody = new Buffer(new Uint8Array(crypted))
+
+                                 console.log("crypted", cbody)
+                               return Buffer.concat([self.keys,self.iv,cbody]);
+                             });
+                           // all done!
+
+                         });
 
 
 
-                 };
-                 return self;
-               });
+                   };
+                   return self;
+                 });
 
-         });
+           });
+
+  })
 
 
 }
