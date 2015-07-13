@@ -47,64 +47,109 @@ describe('cs2a', function(){
     });**/
   });
 
-  it('should load a pair', function(){
-    var local = new cs2a.Local(pairA);
-    expect(local).to.be.a('object');
-    expect(local.err).to.not.exist;
-    expect(local.decrypt).to.be.a('function');
+  it('should load a pair', function(done){
+
+    var local = new cs2a._Local(pairA);
+    local.then(function(local){
+
+      expect(local).to.be.a('object');
+      expect(local.err).to.not.exist;
+      expect(local.decrypt).to.be.a('function');
+      done()
+    })
   });
 
-  it('should fail loading nothing', function(){
-    var local = new cs2a.Local();
-    expect(local.err).to.exist;
+  it('should fail loading nothing', function(done){
+    var local = new cs2a._Local();
+    local.catch(function(){done()})
   });
 
-  it('should fail with bad data', function(){
-    var local = new cs2a.Local({key:new Buffer(21),secret:new Buffer(20)});
-    expect(local.err).to.exist;
+  it('should fail with bad data', function(done){
+    var local = new cs2a._Local({key:new Buffer(21),secret:new Buffer(20)});
+
+    local.catch(function(){done()})
   });
 
-  it('should local decrypt', function(){
-    var local = new cs2a.Local(pairA);
-    // created from remote encrypt
-    var inner = local.decrypt(mbodyBA);
-    expect(Buffer.isBuffer(inner)).to.be.equal(true);
-    expect(inner.length).to.be.equal(2);
-    expect(inner.toString('hex')).to.be.equal('0000');
+  it('should local decrypt', function(done){
+    var local = new cs2a._Local(pairA);
+    local.then(function(local){
+      return local.decrypt(mbodyBA);
+    }).then(function(inner){
+
+      expect(Buffer.isBuffer(inner)).to.be.equal(true);
+      expect(inner.length).to.be.equal(2);
+      expect(inner.toString('hex')).to.be.equal('0000');
+      done()
+    })
   });
 
-  it('should load a remote', function(){
-    var remote = new cs2a.Remote(pairB.key);
-    expect(remote.err).to.not.exist;
-    expect(remote.verify).to.be.a('function');
-    expect(remote.encrypt).to.be.a('function');
-    expect(remote.token).to.exist;
-    expect(remote.token.length).to.be.equal(16);
+  it('should load a remote', function(done){
+    var remote = new cs2a._Remote(pairB.key);
+    remote.then(function(remote){
+      expect(remote.err).to.not.exist;
+      expect(remote.verify).to.be.a('function');
+      expect(remote.encrypt).to.be.a('function');
+      expect(remote.token).to.exist;
+      expect(remote.token.length).to.be.equal(16);
+      done()
+    })
+
   });
 
-  it('should local encrypt', function(){
-    var local = new cs2a.Local(pairA);
-    var remote = new cs2a.Remote(pairB.key);
-    var message = remote.encrypt(local, new Buffer('0000','hex'));
-    expect(Buffer.isBuffer(message)).to.be.equal(true);
-    expect(message.length).to.be.equal(542);
-    console.log("mbodyAB",message.toString('hex'));
+  it('should local encrypt', function(done){
+    var local = new cs2a._Local(pairA);
+    var remote = new cs2a._Remote(pairB.key);
+    Promise.all([local,remote])
+      .then(function(pair){
+        remote = pair[1]
+        local = pair[0]
+        return remote.encrypt(local, new Buffer('0000','hex'));
+      })
+      .then(function(message){
+
+        expect(Buffer.isBuffer(message)).to.be.equal(true);
+        expect(message.length).to.be.equal(542);
+        console.log("mbodyAB",message.toString('hex'));
+        done()
+      })
   });
 
-  it('should remote encrypt', function(){
-    var local = new cs2a.Local(pairB);
-    var remote = new cs2a.Remote(pairA.key);
-    var message = remote.encrypt(local, new Buffer('0000','hex'));
-    expect(Buffer.isBuffer(message)).to.be.equal(true);
-    expect(message.length).to.be.equal(542);
-    console.log("mbodyBA",message.toString('hex'));
+  it('should remote encrypt', function(done){
+    var local = new cs2a._Local(pairB);
+    var remote = new cs2a._Remote(pairA.key);
+    Promise.all([local,remote])
+      .then(function(pair){
+
+        var local = pair[0]
+        var remote = pair[1]
+        remote.encrypt(local, new Buffer('0000','hex')).then(function(message){
+          expect(Buffer.isBuffer(message)).to.be.equal(true);
+          expect(message.length).to.be.equal(542);
+          //console.log("mbodyBA",message.toString('hex'))
+          done()
+        });
+
+      })
+    ;
   });
 
-  it('should remote verify', function(){
-    var local = new cs2a.Local(pairB);
-    var remote = new cs2a.Remote(pairA.key);
-    var bool = remote.verify(local, mbodyAB);
-    expect(bool).to.be.equal(true);
+  it('should remote verify', function(done){
+    var local = new cs2a._Local(pairB);
+    var remote = new cs2a._Remote(pairA.key);
+    Promise.all([local,remote])
+      .then(function(pair){
+
+        var local = pair[0]
+        var remote = pair[1]
+        remote.verify(local, mbodyAB).then(function(ver){
+          console.log("VER?", ver)
+          expect(ver).to.be.equal(true);
+          done()
+        }).catch(function(e){
+          console.log("verify err",e)
+        });
+      })
+
   });
 
   it('should dynamically encrypt, decrypt, and verify', function(done){
