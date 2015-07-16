@@ -195,49 +195,120 @@ describe('cs2a', function(){
 
   });
 
-  it('should load an ephemeral', function(){
-    var local = new cs2a.Local(pairA);
-    var remote = new cs2a.Remote(pairB.key);
-    expect(remote.verify(local, mbodyBA)).to.be.true;
-    var ephemeral = new cs2a.Ephemeral(remote, mbodyBA);
-    expect(ephemeral.decrypt).to.be.a('function');
-    expect(ephemeral.encrypt).to.be.a('function');
+  it('should load an ephemeral', function(done){
+    var local = new cs2a._Local(pairA);
+    var remote = new cs2a._Remote(pairB.key);
+    Promise.all([local,remote])
+      .then(function(lr){
+        remote = lr[1]
+        local = lr[0]
+        remote.verify(local, mbodyBA)
+              .then(function(ver){
+                expect(ver).to.be.true
+                return ver;
+              })
+              .then(function(){
+                console.log("REMOTE?")
+                return new cs2a._Ephemeral(remote, mbodyBA);
+              })
+              .then(function(ephemeral){
+                console.log("EPHEMERAL???",ephemeral)
+                expect(ephemeral.decrypt).to.be.a('function');
+                expect(ephemeral.encrypt).to.be.a('function');
+                done()
+              }).catch(function(er){
+                console.log("ERR",er)
+
+              });
+      })
+
   });
 
-  it('ephemeral local encrypt', function(){
-    var local = new cs2a.Local(pairA);
-    var remote = new cs2a.Remote(pairB.key);
-    expect(remote.verify(local, mbodyBA)).to.be.true;
-    var ephemeral = new cs2a.Ephemeral(remote, mbodyBA);
-    var channel = ephemeral.encrypt(new Buffer('0000','hex'));
-    expect(Buffer.isBuffer(channel)).to.be.equal(true);
-    expect(channel.length).to.be.equal(30);
+  it('ephemeral local encrypt', function(done){
+    var local = new cs2a._Local(pairA);
+    var remote = new cs2a._Remote(pairB.key);
+    Promise.all([local,remote])
+      .then(function(lr){
+        remote = lr[1]
+        local = lr[0]
+        remote.verify(local, mbodyBA)
+              .then(function(ver){
+                expect(ver).to.be.true
+                return ver;
+              })
+              .then(function(){
+                return new cs2a._Ephemeral(remote, mbodyBA);
+              })
+              .then(function(ephemeral){
+                return ephemeral.encrypt(new Buffer("0000", "hex"))
+
+              })
+              .then(function(channel){
+                expect(Buffer.isBuffer(channel)).to.be.equal(true);
+                expect(channel.length).to.be.equal(30);
+                return done()
+              })
+      })
   });
 
-  it('ephemeral full', function(){
+  it('ephemeral full', function(done){
     // handshake one direction
-    var localA = new cs2a.Local(pairA);
-    var remoteB = new cs2a.Remote(pairB.key);
-    var messageBA = remoteB.encrypt(localA, new Buffer('0000','hex'),1);
+    var localA = new cs2a._Local(pairA);
+    var remoteB = new cs2a._Remote(pairB.key);
+    var localB = new cs2a._Local(pairB);
+    var remoteA = new cs2a._Remote(pairA.key);
+    var ephemeralBA, ephemeralAB, channelAB, messageBA, messageAB;
+    Promise.all([localA,localB, remoteA,remoteB])
+      .then(function(array){
+        localA = array[0]
+        localB = array[1]
+        remoteA = array[2]
+        remoteB = array[3]
+        return remoteB.encrypt(localA, new Buffer('0000','hex'),1)
+      })
+      .then(function(mBA){
+        messageBA = mBA;
+        return remoteA.verify(localB,messageBA)
+      })
+      .then(function(verified){
+        expect(verified).to.be.true;
+        return remoteA.encrypt(localB, new Buffer('0000','hex'),1 )
+      })
+      .then(function(mAB){
+        messageAB = mAB
+        return remoteB.verify(localA, messageAB)
+      })
+      .then(function(verified){
+        expect(verified).to.be.true;
+        return new cs2a._Ephemeral(remoteA,messageBA)
+      })
 
-    // receive it and make ephemeral and reply
-    var localB = new cs2a.Local(pairB);
-    var remoteA = new cs2a.Remote(pairA.key);
-    expect(remoteA.verify(localB, messageBA)).to.be.true;
-    var ephemeralBA = new cs2a.Ephemeral(remoteA, messageBA);
-    var messageAB = remoteA.encrypt(localB, new Buffer('0000','hex'),1);
+      .then(function(eBA){
+        ephemeralBA = eBA;
+        return remoteA.encrypt(localB,  new Buffer('0000','hex'),1)
+      })
+      .then(function(messageAB){
+        return remoteB.verify(localA, messageAB)
+                      .then(function(ver){
+                        expect(ver).to.be.true
+                        return new cs2a._Ephemeral(remoteB, messageAB)
+                      })
+      })
+      .then(function(eAB){
+        ephemeralAB = eAB
+        return ephemeralAB.encrypt(new Buffer('4242','hex'));
+      }).then(function(cAB){
+        channelAB = cAB;
+        return ephemeralBA.decrypt(channelAB)
+      })
+      .then(function(body){
 
-    // make other ephemeral and encrypt
-    expect(remoteB.verify(localA, messageAB)).to.be.true;
-    var ephemeralAB = new cs2a.Ephemeral(remoteB, messageAB);
-    var channelAB = ephemeralAB.encrypt(new Buffer('4242','hex'));
-
-    // decrypt?
-    var body = ephemeralBA.decrypt(channelAB);
-    expect(ephemeralBA.err).to.not.exist;
-    expect(Buffer.isBuffer(body)).to.be.equal(true);
-    expect(body.length).to.be.equal(2);
-    expect(body.toString('hex')).to.be.equal('4242');
+        expect(ephemeralBA.err).to.not.exist;
+        expect(Buffer.isBuffer(body)).to.be.equal(true);
+        expect(body.length).to.be.equal(2);
+        expect(body.toString('hex')).to.be.equal('4242');
+        done()
+      })
   });
 
 });
