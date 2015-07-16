@@ -10,7 +10,7 @@
     "hashname": "git+https://github.com/telehash/hashname.git",
     "lob-enc": "git+https://github.com/telehash/lob-enc.git",
     "node-forge": "0.6.x",
-    "sjcl": "1.0.x",
+    "sjcl": "^1.0.3",
     "tweetnacl": "^0.13.0"
   },
   "optionalDependencies": {

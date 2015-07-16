@@ -1,5 +1,6 @@
-var subtle = crypto.subtle;
+
 var NodeCrypto = require('crypto');
+var subtle = require("subtle")
 
 
 var Subtle_Options = {
@@ -99,7 +100,7 @@ exports.Remote = function(key)
       var iv = body.slice(21,21+4);
     return subtle.importKey("raw",Buffer.concat([secret,iv]),Subtle_Options.HMAC,  true, Subtle_Options.HMAC.usage)
           .then(function(key){
-            return crypto.subtle.sign({name:"HMAC"}, key, body.slice(0,body.length-4))
+            return subtle.sign({name:"HMAC"}, key, body.slice(0,body.length-4))
           })
           .then(function(sig){
             var mac = fold(3,new Buffer(new Uint8Array(sig)));

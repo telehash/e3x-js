@@ -25,14 +25,10 @@ describe('cs2a', function(){
     this.timeout(10000)
     cs2a._generate()
         .then(function(pair){
-          console.log(pair)
-          pair_A = pair;
-          cs2a._generate()
-              .then(function(pair){
-                console.log(pair)
-                pair_B = pair;
-                done()
-              })
+          done()
+        })
+        .catch(function(e){
+          console.log("ER", e.stack)
         })
         /**
     cs2a.generate(function(err, pair){
@@ -56,6 +52,9 @@ describe('cs2a', function(){
       expect(local.err).to.not.exist;
       expect(local.decrypt).to.be.a('function');
       done()
+    })
+    .catch(function(er){
+      console.log("load pair error",er.stack)
     })
   });
 

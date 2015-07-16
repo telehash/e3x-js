@@ -1,5 +1,6 @@
 var NodeCrypto = require("crypto");
 var sjcl = require("sjcl");
+var subtle = require("subtle")
 
 exports.id = '2a';
 
@@ -21,11 +22,11 @@ exports._generate = function(){
 
   var usage = ["encrypt","decrypt"];
   var extractable = true;
-  return crypto.subtle.generateKey(rsa_alg, extractable, usage)
+  return subtle.generateKey(rsa_alg, extractable, usage)
         .then(function(pair){
           return Promise.all([
-              crypto.subtle.exportKey("pkcs8",pair.privateKey)
-              , crypto.subtle.exportKey("spki",pair.publicKey)
+              subtle.exportKey("pkcs8",pair.privateKey)
+              , subtle.exportKey("spki",pair.publicKey)
             ]);
         }).then(function(jwks){
           return {
@@ -47,13 +48,13 @@ exports._loadkey = function(id, key, secret){
 
     id.sign = function(buf){
       console.log("loadkey sign", ssa)
-      return crypto.subtle.sign({name: "RSASSA-PKCS1-v1_5"}, ssa, buf)
+      return subtle.sign({name: "RSASSA-PKCS1-v1_5"}, ssa, buf)
                    .then(Bufferize).catch(function(e){console.log("sign err",e)});
     }
     id.decrypt = function(buf){
       console.log("loadkey decrypt", oaep, buf)
-      return crypto.subtle.decrypt({name: "RSA-OAEP",hash:{name:"SHA-1"}}, oaep, buf)
-                   .then(Bufferize).catch(function(e){console.log("decrypt err",e)});
+      return subtle.decrypt({name: "RSA-OAEP",hash:{name:"SHA-1"}}, oaep, buf)
+                   .then(Bufferize).catch(function(e){console.log("decrypt err",e.stack)});
     }
   }
 
@@ -64,12 +65,12 @@ exports._loadkey = function(id, key, secret){
 
     id.encrypt = function(buf){
       console.log("loadkey encrypt", oaep)
-      return crypto.subtle.encrypt({name: "RSA-OAEP"}, oaep, buf)
+      return subtle.encrypt({name: "RSA-OAEP"}, oaep, buf)
                    .then(Bufferize).catch(function(e){console.log("encrypt err",e)});
     }
     id.verify = function(a,b){
       console.log("loadKey verify", ssa, a, b)
-      return crypto.subtle.verify({name: "RSASSA-PKCS1-v1_5"}, ssa, b, a)
+      return subtle.verify({name: "RSASSA-PKCS1-v1_5"}, ssa, b, a)
       .catch(function(e){
         console.log("verify err",e)
       })
@@ -85,8 +86,8 @@ exports._loadkey = function(id, key, secret){
     var off2 = new Buffer([Math.floor(secret.length / 256), (secret.length % 256)])
     secret = Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, secret])
     var importer = Promise.all([
-                          crypto.subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["decrypt"])
-                          ,crypto.subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])
+                          subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["decrypt"])
+                          ,subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])
                         ]).then(privateHandler)
   }
   else
@@ -94,8 +95,8 @@ exports._loadkey = function(id, key, secret){
 
   return importer.then(function(){
     return Promise.all([
-      crypto.subtle.importKey("spki", key, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["encrypt"])
-       ,crypto.subtle.importKey("spki", key, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["verify"])
+      subtle.importKey("spki", key, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["encrypt"])
+       ,subtle.importKey("spki", key, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["verify"])
     ]);
   }).then(publicHandler)
 }
@@ -167,9 +168,9 @@ exports._Local = function(pair){
                     };
 
                     console.log("decrypt keys")
-                    return crypto.subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
+                    return subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
                           .then(function(key){
-                            return crypto.subtle.decrypt(alg, key, body.slice(256+12))
+                            return subtle.decrypt(alg, key, body.slice(256+12))
                           })
                           .then(function(body){
                             console.log("decrypt", body)
@@ -244,7 +245,7 @@ exports._Remote = function(key)
   var aesKey;
   //window.Buffer = Buffer;
 
-  return crypto.subtle.generateKey(
+  return subtle.generateKey(
     {
         name  : "ECDH",
         namedCurve: "P-256", //can be "P-256", "P-384", or "P-521"
@@ -256,7 +257,7 @@ exports._Remote = function(key)
     self.ephemeral = {
       PrivateKey  : key.privateKey
     };
-    return crypto.subtle.exportKey("spki", key.publicKey)
+    return subtle.exportKey("spki", key.publicKey)
   }).then(function(pub){
 
     var PublicKey = new Buffer(new Uint8Array(pub))
@@ -274,7 +275,7 @@ exports._Remote = function(key)
 
     self.secret = crypto.getRandomValues(new Buffer(32))
     self.iv = crypto.getRandomValues(new Buffer(12))
-    return crypto.subtle.importKey("raw", self.secret,alg, false,["encrypt","decrypt"] )
+    return subtle.importKey("raw", self.secret,alg, false,["encrypt","decrypt"] )
   }).then(function(aeskey)
   // verifies the authenticity of an incoming message body
   {
@@ -329,7 +330,7 @@ exports._Remote = function(key)
 
                // aes gcm encrypt the inner+sig
                var body = Buffer.concat([inner, new Buffer(new Uint8Array(sig))])
-               return crypto.subtle.encrypt(alg,aesKey, body)
+               return subtle.encrypt(alg,aesKey, body)
                  .then(function(crypted){
                    var cbody = new Buffer(new Uint8Array(crypted))
 
@@ -428,30 +429,30 @@ exports._Ephemeral = function(remote, outer, inner){
 
   var eccSPKI = Buffer.concat([spkiECCPad,keys.slice(0,65)])
 
-  return crypto.subtle.importKey("spki", eccSPKI, {name:"ECDH",namedCurve:"P-256"},false,["deriveBits"])
+  return subtle.importKey("spki", eccSPKI, {name:"ECDH",namedCurve:"P-256"},false,["deriveBits"])
         .then(function(key){
           console.log("PRIVATE KEY?", remote.ephemeral.PrivateKey)
-          return crypto.subtle.deriveBits({name:"ECDH", namedCurve:"P-256", public: key}, remote.ephemeral.PrivateKey,256)
+          return subtle.deriveBits({name:"ECDH", namedCurve:"P-256", public: key}, remote.ephemeral.PrivateKey,256)
         })
         .then(function(bits){
           return new Buffer(new Uint8Array(bits))
         })
         .then(function(Ecdhe){
           ecdhe = Ecdhe;
-          return crypto.subtle.digest({name:"SHA-256"}, Buffer.concat([ecdhe, remote.secret,keys.slice(65)]))
+          return subtle.digest({name:"SHA-256"}, Buffer.concat([ecdhe, remote.secret,keys.slice(65)]))
         })
         .then(function(hash){
-          return crypto.subtle.importKey("raw",hash,{name:"AES-GCM"},false, ["encrypt"])
+          return subtle.importKey("raw",hash,{name:"AES-GCM"},false, ["encrypt"])
         })
         .then(function(encKey){
           self.encKey = encKey
           return true
         })
         .then(function(){
-          return crypto.subtle.digest({name:"SHA-256"}, Buffer.concat([ecdhe, keys.slice(65),remote.secret]))
+          return subtle.digest({name:"SHA-256"}, Buffer.concat([ecdhe, keys.slice(65),remote.secret]))
         })
         .then(function(hash){
-          return crypto.subtle.importKey("raw",hash,{name:"AES-GCM"},false, ["decrypt"])
+          return subtle.importKey("raw",hash,{name:"AES-GCM"},false, ["decrypt"])
         })
         .then(function(decKey){
           self.decKey = decKey;
@@ -463,7 +464,7 @@ exports._Ephemeral = function(remote, outer, inner){
           self.iv = NodeCrypto.randomBytes(12);
 
           self.decrypt = function(outer){
-            return crypto.subtle.decrypt( { name: "AES-GCM", iv: outer.slice(0,12), additionalData: new Buffer(0), tagLength: 128}, self.decKey, outer.slice(12)) //The tagLength you used to encrypt
+            return subtle.decrypt( { name: "AES-GCM", iv: outer.slice(0,12), additionalData: new Buffer(0), tagLength: 128}, self.decKey, outer.slice(12)) //The tagLength you used to encrypt
                      .then(function(buf){
                         return new Buffer(new Uint8Array(buf))
                       })
@@ -477,7 +478,7 @@ exports._Ephemeral = function(remote, outer, inner){
             seq++;
             self.iv.writeUInt32LE(seq,0);
 
-            return crypto.subtle.encrypt({ name: "AES-GCM", iv: self.iv, additionalData: new Buffer(0), tagLength: 128}, self.encKey, inner)
+            return subtle.encrypt({ name: "AES-GCM", iv: self.iv, additionalData: new Buffer(0), tagLength: 128}, self.encKey, inner)
                         .then(function(cbody){
                           return Buffer.concat([self.iv, new Buffer(new Uint8Array(cbody))])
                         })
