@@ -14,6 +14,43 @@ exports.generate = function(cb)
   var kp = sodium.crypto_box_keypair();
   cb(null, {key:kp.publicKey, secret:kp.secretKey});
 }
+exports._Local = function(pair){
+  var local = new exports.Local(pair)
+  this.decrypt = function(body){
+    return Promise.resolve(local.decrypt(body))
+  }
+
+  return Promise.resolve(this)
+}
+
+exports._Remote = function(key){
+  var remote = new exports.Remote(key)
+
+  this.encrypt = function(a1, a2){
+    return Promise.resolve(remote.encrypt(a1, a2))
+  }
+
+  this.verify  = function(a1, a2){
+    return Promise.resolve(remote.verify(a1,a2))
+  };
+
+  return Promise.resolve(this)
+
+}
+
+exports._Ephemeral = function(remote, body){
+  var ephemeral = new exports.Ephemeral(remote, body)
+
+  this.encrypt = function(body){
+    return Promise.resolve(ephemeral.encrypt(body))
+  }
+
+  this.decrypt = function(body){
+    return Promise.resolve(ephemeral.decrypt(body))
+  }
+
+  return Promise.resolve(this)
+}
 
 exports.Local = function(pair)
 {
@@ -41,7 +78,7 @@ exports.Local = function(pair)
     // decipher the inner
     var zeros = new Buffer(Array(sodium.crypto_secretbox_BOXZEROBYTES)); // add zeros for nacl's api
     var inner = sodium.crypto_secretbox_open(Buffer.concat([zeros,innerc]),nonce,secret);
-    
+
     return inner;
   };
 }
@@ -85,7 +122,7 @@ exports.Remote = function(key)
     innerc = innerc.slice(sodium.crypto_secretbox_BOXZEROBYTES); // remove zeros from nacl's api
     var body = Buffer.concat([self.ephemeral.publicKey,nonce,innerc]);
 
-    // prepend the line public key and hmac it  
+    // prepend the line public key and hmac it
     var secret = sodium.crypto_box_beforenm(self.endpoint, local.secret);
     var akey = crypto.createHash('sha256').update(Buffer.concat([nonce,secret])).digest();
     var mac = sodium.crypto_onetimeauth(body,akey);
@@ -98,7 +135,7 @@ exports.Remote = function(key)
 exports.Ephemeral = function(remote, body)
 {
   var self = this;
-  
+
   try{
     // sender token
     self.token = crypto.createHash('sha256').update(body.slice(0,16)).digest().slice(0,16);
@@ -143,5 +180,3 @@ exports.Ephemeral = function(remote, body)
     return Buffer.concat([nonce,cbody]);
   };
 }
-
-

@@ -32,6 +32,43 @@ exports.generate = function(cb)
   cb(null, {key:k.PublicKey, secret:k.PrivateKey});
 }
 
+exports._Local = function(pair){
+  var local = new exports.Local(pair)
+
+  this.token = local.token
+  this.decrypt = function(body){
+    return Promise.resolve(local.decrypt(body))
+  }
+
+  return Promise.resolve(this)
+}
+
+exports._Remote = function(key){
+  var remote = new exports.Remote(key)
+  this.token = remote.token
+  this.encrypt = function(a1, a2){
+    return Promise.resolve(remote.encrypt(a1, a2))
+  }
+
+  this.verify  = remote._verify;
+
+  return Promise.resolve(this)
+}
+
+exports._Ephemeral = function(remote, body){
+  var ephemeral = new exports.Ephemeral(remote, body)
+  this.token = ephemeral.token
+  this.encrypt = function(body){
+    return Promise.resolve(ephemeral.encrypt(body))
+  }
+
+  this.decrypt = function(body){
+    return Promise.resolve(ephemeral.decrypt(body))
+  }
+
+  return Promise.resolve(this)
+}
+
 exports.Local = function(pair)
 {
   var self = this;
@@ -100,6 +137,7 @@ exports.Remote = function(key)
       var iv = body.slice(21,21+4);
     return subtle.importKey("raw",Buffer.concat([secret,iv]),Subtle_Options.HMAC,  true, Subtle_Options.HMAC.usage)
           .then(function(key){
+            console.log("HMAC KEY", key)
             return subtle.sign({name:"HMAC"}, key, body.slice(0,body.length-4))
           })
           .then(function(sig){
