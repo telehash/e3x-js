@@ -104,8 +104,6 @@ exports._loadkey = function(id, key, secret){
 
 exports.generate = function(cb)
 {
-  // disable web-workers for now, not browserify compatible
-//  forge.rsa.generateKeyPair({bits: 2048, e: 0x10001, workers: -1}, function(err, keys){
   var keys = forge.rsa.generateKeyPair({bits: 2048, e: 0x10001});
   if(!keys) return cb("failed to generate rsa keys");
   var key = forge.asn1.toDer(forge.pki.publicKeyToAsn1(keys.publicKey)).bytes();
@@ -149,47 +147,7 @@ exports._Local = function(pair){
   var self = this;
 
   self.key = {};
-  /*
-  return exports._loadkey(self.key,pair.key,pair.secret)
-         .then(function(key){
-           self.key = key;
-           ////console.log("_local loadkey")
 
-           self.decrypt = function(body){
-             ////console.log("buffer.isBuffer", Buffer.isBuffer(body), (body.length < 256+12+256+16))
-             if(!Buffer.isBuffer(body)) return false;
-             if(body.length < 256+12+256+16) return false;
-             var b = body
-             // rsa decrypt the keys
-             return self.key.decrypt(b.slice(0,256))
-                 .then(function(keys){
-                   //console.log("keys",keys.length)
-                   if(!keys || keys.length != (65+32)) return false;
-                   var body = b;
-                   var alg = { name: "AES-GCM"
-                    , tagLength: 128
-                    , iv : body.slice(256,256+12)
-                    , additionalData: body.slice(0,256)
-                    };
-
-                    //console.log("decrypt keys")
-                    return subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
-                          .then(function(key){
-                            return subtle.decrypt(alg, key, body.slice(256+12))
-                          })
-                          .then(function(body){
-                            //console.log("decrypt", body)
-
-                            var b = new Buffer(new Uint8Array(body))
-                            //console.log(b)
-                            var ret = b.slice(0,b.length-256);
-                            ret._keys = keys;
-                            ret._sig = b.slice(ret.length);
-                            return ret;
-                          })
-                 });
->>>>>>> Stashed changes
-*/
 
   function aes_unpack(body){
     var keyBytes = body.slice(0,256)
