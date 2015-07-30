@@ -1,6 +1,22 @@
 var NodeCrypto = require("crypto");
 var sjcl = require("sjcl");
 var subtle = require("subtle")
+  , pkcsPad1  = new Buffer([48, 130])
+  , pkcsPad2  = new Buffer([2, 1, 0, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 4, 130])
+
+function pkcs8_pad(privateBytes){
+  var off1 = new Buffer([Math.floor(privateBytes.length / 256),((privateBytes.length + 22) % 256) ])
+  var off2 = new Buffer([Math.floor(privateBytes.length / 256), (privateBytes.length % 256)])
+  return Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, privateBytes]);
+}
+
+function pkcs8_unpad(privateBytes){
+  return privateBytes.slice(pkcsPad1.length + pkcsPad2.length + 4);
+}
+
+function Bufferize(arraybuffer){
+  return new Buffer(new Uint8Array(arraybuffer))
+}
 
 exports.id = '2a';
 
@@ -36,40 +52,32 @@ exports._generate = function(){
         });
 }
 
-function Bufferize(arraybuffer){
-  return new Buffer(new Uint8Array(arraybuffer))
-}
+
 exports._loadkey = function(id, key, secret){
-  var alg = {}
+  var alg = {}, importer;
   function privateHandler(privates){
-    console.log("privatehandler")
     var oaep = privates[0]
       , ssa  = privates[1];
 
-    id.sign = function(buf){
-      console.log("loadkey sign", ssa)
+    id.sign = function cs2a_sign(buf){
       return subtle.sign({name: "RSASSA-PKCS1-v1_5"}, ssa, buf)
                    .then(Bufferize).catch(function(e){console.log("sign err",e)});
     }
-    id.decrypt = function(buf){
-      console.log("loadkey decrypt", oaep, buf)
+    id.decrypt = function cs2a_decrypt(buf){
       return subtle.decrypt({name: "RSA-OAEP",hash:{name:"SHA-1"}}, oaep, buf)
                    .then(Bufferize).catch(function(e){console.log("decrypt err",e.stack)});
     }
   }
 
   function publicHandler(publics){
-    console.log("publichandler")
     var oaep = publics[0]
       , ssa  = publics[1];
 
-    id.encrypt = function(buf){
-      console.log("loadkey encrypt", oaep)
+    id.encrypt = function cs2a_encrypt(buf){
       return subtle.encrypt({name: "RSA-OAEP"}, oaep, buf)
                    .then(Bufferize).catch(function(e){console.log("encrypt err",e)});
     }
-    id.verify = function(a,b){
-      console.log("loadKey verify", ssa, a, b)
+    id.verify = function cs2a_verify(a,b){
       return subtle.verify({name: "RSASSA-PKCS1-v1_5"}, ssa, b, a)
       .catch(function(e){
         console.log("verify err",e)
@@ -77,28 +85,21 @@ exports._loadkey = function(id, key, secret){
     }
     return id;
   }
-  console.log("secret", secret)
-  //WOOOOOOOO!!!
-  if (secret){
-    var pkcsPad1  = new Buffer([48, 130])
-    var off1 = new Buffer([Math.floor(secret.length / 256),((secret.length + 22) % 256) ])
-    var pkcsPad2  = new Buffer([2, 1, 0, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 4, 130])
-    var off2 = new Buffer([Math.floor(secret.length / 256), (secret.length % 256)])
-    secret = Buffer.concat([pkcsPad1, off1, pkcsPad2, off2, secret])
-    var importer = Promise.all([
-                          subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["decrypt"])
-                          ,subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])
-                        ]).then(privateHandler)
-  }
-  else
-    importer = Promise.resolve();
 
-  return importer.then(function(){
-    return Promise.all([
-      subtle.importKey("spki", key, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["encrypt"])
-       ,subtle.importKey("spki", key, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["verify"])
-    ]);
-  }).then(publicHandler)
+  function secret_import(secret){
+    return Promise.all([ subtle.importKey("pkcs8", secret, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["decrypt"])
+                        , subtle.importKey("pkcs8", secret, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["sign"])]);
+  }
+
+  function public_import(){
+    return Promise.all([ subtle.importKey("spki", key, {name: "RSA-OAEP", hash: {name: "SHA-1"}}, false, ["encrypt"])
+                       , subtle.importKey("spki", key, {name: "RSASSA-PKCS1-v1_5", hash: {name: "SHA-256"}}, false, ["verify"])]);
+  }
+
+  secret = (secret) ? pkcs8_pad(secret) : null;
+  secret = (secret) ? secret_import(secret).then(privateHandler) : Promise.resolve();
+
+  return secret.then(public_import).then(publicHandler);
 }
 
 exports.generate = function(cb)
@@ -143,51 +144,97 @@ exports.loadkey = function(id, key, secret)
 exports._Local = function(pair){
   if (!(pair && pair.key && pair.secret))
     return Promise.reject(new Error("must supply valid keypair"))
+
+
   var self = this;
+
   self.key = {};
-  return exports._loadkey(self.key,pair.key,pair.secret)
-         .then(function(key){
-           self.key = key;
-           console.log("_local loadkey")
 
-           self.decrypt = function(body){
-             console.log("buffer.isBuffer", Buffer.isBuffer(body), (body.length < 256+12+256+16))
-             if(!Buffer.isBuffer(body)) return false;
-             if(body.length < 256+12+256+16) return false;
-             var b = body
-             // rsa decrypt the keys
-             return self.key.decrypt(b.slice(0,256))
-                 .then(function(keys){
-                   console.log("keys",keys.length)
-                   if(!keys || keys.length != (65+32)) return false;
-                   var body = b;
-                   var alg = { name: "AES-GCM"
-                    , tagLength: 128
-                    , iv : body.slice(256,256+12)
-                    , additionalData: body.slice(0,256)
-                    };
 
-                    console.log("decrypt keys")
-                    return subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
-                          .then(function(key){
-                            return subtle.decrypt(alg, key, body.slice(256+12))
-                          })
-                          .then(function(body){
-                            console.log("decrypt", body)
+  function aes_unpack(body){
+    var keyBytes = body.slice(0,256)
 
-                            var b = new Buffer(new Uint8Array(body))
-                            console.log(b)
-                            var ret = b.slice(0,b.length-256);
-                            ret._keys = keys;
-                            ret._sig = b.slice(ret.length);
-                            return ret;
-                          })
-                 });
+    return self.key.decrypt(keyBytes)
+                   .then(function(keys){
+                     if(!keys || keys.length != (65+32))
+                       throw new Error("failed to decrypt the aes keys")
 
+                     return {
+                       name      : "AES-GCM",
+                       tagLength : 128,
+                       iv        : body.slice(256,256 + 12),
+                       additionalData : body.slice(0,256),
+                       raw    : keys.slice(65, 65 + 32),
+                       _keys  : keyBytes,
+                       body   : body.slice(256 + 12)
+                     };
+                   });
+  }
+
+  function aes_decrypt(alg){
+    return subtle.importKey("raw",alg.raw, {name: "AES-GCM"},false,["encrypt","decrypt"])
+          .then(function(key){
+            return subtle.decrypt(alg, key, alg.body)
+          })
+          .then(function(body){
+            var ret = body.slice(0, body.length - 256);
+            ret._sig = body.slice(body.length - 256);
+            ret._keys = alg._keys;
+            return ret;
+          })
+  }
+
+
+
+    /*
+    // rsa decrypt the keys
+    return self.key.decrypt(b.slice(0,256))
+        .then(function(keys){
+          console.log("keys",keys.length)
+          if(!keys || keys.length != (65+32)) return false;
+          var body = b;
+          var alg = { name: "AES-GCM"
+           , tagLength: 128
+           , iv : body.slice(256,256+12)
+           , additionalData: body.slice(0,256)
            };
-           return self;
-         });
-  // decrypt message body and return the inner
+
+           console.log("decrypt keys")
+           return subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
+                 .then(function(key){
+                   return subtle.decrypt(alg, key, body.slice(256+12))
+                 })
+                 .then(function(body){
+                   console.log("decrypt", body)
+
+                   var b = new Buffer(new Uint8Array(body))
+                   console.log(b)
+                   var ret = b.slice(0,b.length-256);
+                   ret._keys = keys;
+                   ret._sig = b.slice(ret.length);
+                   return ret;
+                 })
+        });
+        */
+
+
+  self.decrypt = function cs2a_local_decrypt(body){
+    if(!Buffer.isBuffer(body)) return false;
+    if(body.length < 256+12+256+16) return false;
+    var b = body
+
+    return aes_unpack(body).then(aes_decrypt);
+  }
+
+
+  function return_self(){
+    console.log("RETURN SELF")
+    return self;
+  }
+
+  return exports._loadkey(self.key,pair.key, pair.secret)
+                .then(return_self);
+
 
 }
 
@@ -273,8 +320,8 @@ exports._Remote = function(key)
     return "JS"
   }).then(function(){
 
-    self.secret = crypto.getRandomValues(new Buffer(32))
-    self.iv = crypto.getRandomValues(new Buffer(12))
+    self.secret = NodeCrypto.randomBytes(32)
+    self.iv = NodeCrypto.randomBytes((12))
     return subtle.importKey("raw", self.secret,alg, false,["encrypt","decrypt"] )
   }).then(function(aeskey)
   // verifies the authenticity of an incoming message body
@@ -457,6 +504,7 @@ exports._Ephemeral = function(remote, outer, inner){
         .then(function(decKey){
           self.decKey = decKey;
           return true;
+          console.log("ERR?")
         })
         .then(function(){
 
