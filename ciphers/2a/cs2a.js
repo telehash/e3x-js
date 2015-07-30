@@ -276,126 +276,74 @@ exports.Local = function(pair)
     return ret;
   };
 }
+
+function subtle_remote(remote_public){
+  var self = this;
+  self.key = {};
+
+  return exports._loadkey(self.key, remote_public)
+               .then(function(){
+                 return subtle.generateKey({name : "ECDH", namedCurve: "P-256"},true, ["deriveBits"]);
+               })
+               .then(function (ecdhkeys){
+                 self.ephemeral = ecdhkeys;
+                 return subtle.exportKey("spki", ecdhkeys.publicKey)
+
+               })
+               .then(function (eccpub){
+                 return self.key.encrypt(Buffer.concat([eccpub.slice(eccpub.length - 65), self.secret]));
+               })
+               .then(function (keyBytes){
+                 self.keys = keyBytes;
+                 return subtle.importKey("raw", self.secret,{name:"AES-GCM",tagLength:128}, false,["encrypt","decrypt"])
+               });
+}
+
+function cs2a_remote(aeskey){
+  this.token = NodeCrypto.createHash('sha256').update(this.keys.slice(0,16)).digest().slice(0,16);
+
+  var iv   = NodeCrypto.randomBytes(12)
+    , self = this;
+
+  this.verify = function(local, body){
+    // decrypt it first
+    var cached;
+    return local.decrypt(body)
+         .then(function(inner){
+           var toVerify = Buffer.concat([body.slice(0,256+12),inner])
+           cached = inner._keys;
+           return self.key.verify( toVerify, inner._sig)
+         })
+         .then(function(verified){
+           if (verified)
+             self.cached = cached;
+           return verified;
+         });
+
+  };
+
+  this.encrypt = function(local, inner){
+    var seq = iv.readUInt32LE(0);
+    iv.writeUInt32LE(++seq,0);
+
+    // generate the signature
+    return local.key.sign(Buffer.concat([self.keys,iv,inner]))
+                    .then(function(sig){
+                      var body = Buffer.concat([inner, sig])
+                      return subtle.encrypt({name: "AES-GCM", tagLength:128,iv:iv, additionalData : self.keys}, aeskey, body);
+                    })
+                    .then(function(encrypted){
+                      return Buffer.concat([self.keys,iv,encrypted]);
+                    });
+  };
+  return this;
+
+}
 exports._Remote = function(key)
 {
-  var self = this;
-  self.key = {}
-  //console.log("EPHEMERAL", self.ephemeral)
-  var alg = {
-    name: "AES-GCM"
-    , tagLength : 128
-    , length : 256
-    , iv : self.iv
-  }
-  var aesKey;
-  //window.Buffer = Buffer;
+  this.secret = NodeCrypto.randomBytes(32);
 
-  return subtle.generateKey(
-    {
-        name  : "ECDH",
-        namedCurve: "P-256", //can be "P-256", "P-384", or "P-521"
-    },
-    true, //whether the key is extractable (i.e. can be used in exportKey)
-    ["deriveBits"] //can be any combination of "deriveKey" and "deriveBits"
-  ).then(function(key){
-    console.log('GENERATEKEY',key)
-    self.ephemeral = {
-      PrivateKey  : key.privateKey
-    };
-    return subtle.exportKey("spki", key.publicKey)
-  }).then(function(pub){
-
-    var PublicKey = new Buffer(new Uint8Array(pub))
-    PublicKey = PublicKey.slice(PublicKey.length - 65)
-    self.ephemeral.PublicKey = PublicKey;
-    return "subtle"
-  })
-  .catch(function(er){
-    console.log("CECC", er)
-    var curve = cecc.ECCurves.secp256r1
-    curve.legacy = true;
-    self.ephemeral = new cecc.ECKey(curve);
-    //console.log("SELF.ephe",self.ephemeral)
-    return "JS"
-  }).then(function(){
-
-    self.secret = NodeCrypto.randomBytes(32)
-    self.iv = NodeCrypto.randomBytes((12))
-    return subtle.importKey("raw", self.secret,alg, false,["encrypt","decrypt"] )
-  }).then(function(aeskey)
-  // verifies the authenticity of an incoming message body
-  {
-      aesKey = aeskey
-    return exports._loadkey(self.key,key)
-  }).then(function(key){
-    var keys = Buffer.concat([self.ephemeral.PublicKey,self.secret])
-    //console.log("EPHEMERAL + SECRET", keys.length)
-     return self.key.encrypt(keys).then(function(keys){
-       self.keys = new Buffer(new Uint8Array(keys));
-       alg.additionalData = self.keys;
-       self.token = NodeCrypto.createHash('sha256').update(self.keys.slice(0,16)).digest().slice(0,16);
-       //console.log("_Remote loadkey")
-
-       self.verify = function(local, body){
-         //console.log(local,body,"VERIFY begin")
-         if(!Buffer.isBuffer(body)) return false;
-
-         // decrypt it first
-         return local.decrypt(new Buffer(body))
-              .then(function(inner){
-                //console.log("decrypted body",inner)
-                if(!inner) return false;
-
-                //console.log(inner, inner._sig)
-
-                // verify the rsa signature
-                return key.verify(Buffer.concat([body.slice(0,256+12),inner]), inner._sig)
-                          .then(function(verified){
-                            //console.log("verifieds?", verified)
-                            if (verified)
-                              self.cached = inner._keys;
-                            return verified;
-                          })
-              });
-
-       };
-
-       self.encrypt = function(local, inner){
-         if(!Buffer.isBuffer(inner)) return false;
-
-         // increment the IV
-         var seq = self.iv.readUInt32LE(0);
-         seq++;
-         self.iv.writeUInt32LE(seq,0);
-         //console.log('self.iv', self.iv)
-         alg.iv = self.iv;
-
-         // generate the signature
-         return local.key.sign(Buffer.concat([self.keys,self.iv,inner]))
-              .then(function(sig){
-
-               // aes gcm encrypt the inner+sig
-               var body = Buffer.concat([inner, new Buffer(new Uint8Array(sig))])
-               return subtle.encrypt(alg,aesKey, body)
-                 .then(function(crypted){
-                   var cbody = new Buffer(new Uint8Array(crypted))
-
-                     //console.log("crypted", cbody)
-                   return Buffer.concat([self.keys,self.iv,cbody]);
-                 });
-               // all done!
-
-             });
-
-
-
-       };
-       return self;
-     });
-   });
-
-
-
+  return subtle_remote.bind(this)(key).then(cs2a_remote.bind(this));
 }
 
 exports.Remote = function(key)
@@ -465,13 +413,11 @@ var spkiECCPad = new Buffer("3056301006042b81047006082a8648ce3d030107034200","he
 function subtle_ephemeral(remote, keys){
   var aesBytes = keys.slice(65)
     , eccBytes = keys.slice(0, 65)
-    , eccSPKI  = Buffer.concat([spkiECCPad,eccBytes])
-
+    , eccSPKI  = Buffer.concat([spkiECCPad,eccBytes]);
 
   return subtle.importKey("spki", eccSPKI, {name:"ECDH",namedCurve:"P-256"},true,[])
         .then(function(key){
-
-          return subtle.deriveBits({name:"ECDH", namedCurve:"P-256", public: key}, remote.ephemeral.PrivateKey,256)
+          return subtle.deriveBits({name:"ECDH", namedCurve:"P-256", public: key}, remote.ephemeral.privateKey,256)
         })
         .then(function(ecdhe){
           var encBytes = Buffer.concat([ecdhe, remote.secret,keys.slice(65)])
@@ -504,7 +450,6 @@ function cs2a_ephemeral(keys){
   this.encrypt = function cs2a_ephemeral_encrypt(inner){
     // incriment the iv
     var seq = iv.readUInt32LE(0);
-
     iv.writeUInt32LE(++seq,0);
 
     return subtle.encrypt({name: "AES-GCM", iv:iv, additionalData: new Buffer(0), tagLength: 128}, encKey, inner)
@@ -531,72 +476,9 @@ function cs2a_ephemeral(keys){
 
 exports._Ephemeral = function(remote, outer, inner){
   var keys = remote.cached || (inner._keys);
-
   this.token = NodeCrypto.createHash('sha256').update(outer.slice(0,16)).digest().slice(0,16);
-  this.iv = NodeCrypto.randomBytes(12);
 
   return subtle_ephemeral(remote, keys).then(cs2a_ephemeral.bind(this));
-
-
-  //console.log(spkiECCPad,keys.slice(0,65));
-  var ecdhe;
-  console.log("!!!!!!!!", keys, remote.secret )
-  var eccSPKI = Buffer.concat([spkiECCPad,keys.slice(0,65)])
-  console.log("??????", eccSPKI)
-  return subtle.importKey("spki", eccSPKI, {name:"ECDH",namedCurve:"P-256"},true,[])
-        .then(function(key){
-          console.log("PRIVATE KEY?",key, remote.ephemeral.PrivateKey)
-          return subtle.deriveBits({name:"ECDH", namedCurve:"P-256", public: key}, remote.ephemeral.PrivateKey,256)
-        })
-        .then(function(Ecdhe){
-          ecdhe = Ecdhe;
-          self._enc = [ecdhe, remote.secret,keys.slice(65)]
-          console.log("ECDH", ecdhe.toString("hex"))
-          return subtle.digest({name:"SHA-256"}, Buffer.concat([ecdhe, remote.secret,keys.slice(65)]))
-        })
-        .then(function(hash){
-          console.log("Digest", hash.toString("hex"))
-          self._encBytes = hash.toString("hex")
-          return subtle.importKey("raw",hash,{name:"AES-GCM"},false, ["encrypt"])
-        })
-        .then(function(encKey){
-          self.encKey = encKey
-          return true
-        })
-        .then(function(){
-          self._dec = [ecdhe, keys.slice(65),remote.secret]
-          return subtle.digest({name:"SHA-256"}, Buffer.concat([ecdhe, keys.slice(65),remote.secret]))
-        })
-        .then(function(hash){
-          console.log("decKey", hash.toString("hex"))
-          self._decBytes = hash.toString("hex")
-          return subtle.importKey("raw",hash,{name:"AES-GCM"},false, ["decrypt"])
-        })
-        .then(function(decKey){
-
-          self.decrypt = function(outer){
-            console.log("decrypt called",outer, self.decKey)
-            return subtle.decrypt( { name: "AES-GCM", iv: outer.slice(0,12), additionalData: new Buffer(0), tagLength: 128}, self.decKey, outer.slice(12)) //The tagLength you used to encrypt
-          };
-
-          self.encrypt = function(inner){
-            var seq = self.iv.readUInt32LE(0);
-            seq++;
-            self.iv.writeUInt32LE(seq,0);
-
-            return subtle.encrypt({ name: "AES-GCM", iv: self.iv, additionalData: new Buffer(0), tagLength: 128}, self.encKey, inner)
-                        .then(function(cbody){
-                          var packed = Buffer.concat([self.iv, cbody])
-
-                          console.log("encrypted", packed, self.iv, cbody)
-                          return packed;
-                        })
-
-          };
-          return self;
-        })
-
-
 }
 
 exports.Ephemeral = function(remote, outer, inner)
