@@ -137,59 +137,66 @@ self.exchange = function(args)
 
   //PROMISE
   x.send = function(inner, arg){
-    if(typeof inner != 'object') return x.error('invalid inner packet');
-    if(!x.sending) return x.error('send with no sending handler');
-    if(!x.session) return x.error('send with no session');
-    if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
+    if(typeof inner != 'object') return Promise.reject(x.error('invalid inner packet'));
+    if(!x.sending) return Promise.reject(x.error('send with no sending handler'));
+    if(!x.session) return Promise.reject(x.error('send with no session'));
+
+    inner = (!lob.isPacket(inner)) ? lob.packet(inner.json,inner.body) : inner; // convenience
+
     self.debug('channel encrypting',inner.json,inner.body.length);
 
     x.sending = (typeof x.sending === "function") ? x.sending : function noop(){};
 
-    x.session.encrypt(inner)
-             .then(function(enc){
-               return lob.packet(null, Buffer.concat([x.session.token,enc]));
-             })
-             .then(function(packet){
-               x.sending(packet, arg);
-               return packet;
-             });
+    return x.session.encrypt(inner)
+                     .then(function(enc){
+                       return lob.packet(null, Buffer.concat([x.session.token,enc]));
+                     })
+                     .then(function(packet){
+                       x.sending(packet, arg);
+                       return packet;
+                     });
   };
 
-  //TODO
+  //PROMISE
   x.sync = function(handshake, inner){
     if(!handshake) return false;
     if(!inner) inner = self.decrypt(handshake); // optimization to pass one in already done
     if(!inner) return false;
     if(!x.verify(handshake)) return false;
 
-    // create/update session if needed
-    var sid = handshake.slice(0,16).toString('hex'); // stable token bytes
-    if(x.sid != sid)
-    {
-      var session = new csets[csid].Ephemeral(cs, handshake.body);
-      if(session.err) return x.error('session error: '+session.err);
-      self.debug('new ephemeral');
-      x.session = session;
-      x.sid = sid;
-      x.z = parseInt(inner.z);
-      // free up any gone channels since id's can be re-used now
-      Object.keys(x.channels).forEach(function(id){
-        if(x.channels[id].state == 'gone') delete x.channels[id];
-      });
-    }
+    x.verify(handshake)
+     .then(function(ver){
+       if (!ver)
+         throw new Error("handshake failed to verify")
 
-    // make sure theirs is legit, or send a new one
-    if(typeof inner.json.at != 'number') return false;
-    if(inner.json.at % 2 === 0 && x.order == 2) return false;
+       var sid = handshake.slice(0,16).toString('hex'); // stable token  bytes
+       if(x.sid != sid)
+       {
+         x.session = new csets[csid].Ephemeral(cs, handshake.body);
+         x.sid = sid;
+         x.z = parseInt(inner.z);
+         // free up any gone channels since id's can be re-used now
+         Object.keys(x.channels).forEach(function(id){
+           if(x.channels[id].state == 'gone')
+             delete x.channels[id];
+         });
+       }
 
-    // do nothing if we're in sync
-    if(x._at === inner.json.at) return true;
+       // make sure theirs is legit, or send a new one
+       if((typeof inner.json.at != 'number') || (inner.json.at % 2 === 0 && x.order == 2))
+         return false;
 
-    // if they're higher, save it as the best
-    if(x._at < inner.json.at) x._at = inner.json.at;
+       // do nothing if we're in sync
+       if(x._at === inner.json.at)
+         return true;
 
-    // signal to send a handshake
-    return false;
+       // if they're higher, save it as the best
+       if(x._at < inner.json.at)
+         x._at = inner.json.at;
+
+       // signal to send a handshake
+       return false;
+     })
   };
 
   // resend any packets we can
