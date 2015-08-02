@@ -14,6 +14,12 @@ exports.generate = function(cb)
   var kp = sodium.crypto_box_keypair();
   cb(null, {key:kp.publicKey, secret:kp.secretKey});
 }
+
+exports._generate = function(){
+  var kp = sodium.crypto_box_keypair();
+  return Promise.resolve({key:kp.publicKey, secret:kp.secretKey})
+}
+
 exports._Local = function(pair){
   var local = new exports.Local(pair)
   this.decrypt = function(body){

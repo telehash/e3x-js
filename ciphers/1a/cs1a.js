@@ -32,6 +32,13 @@ exports.generate = function(cb)
   cb(null, {key:k.PublicKey, secret:k.PrivateKey});
 }
 
+exports._generate = function(){
+  return new Promise(function (resolve,reject){
+    var k = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1);
+    resolve({key:k.PublicKey, secret:k.PrivateKey})
+  });
+}
+
 exports._Local = function(pair){
   var local = new exports.Local(pair)
 
