@@ -140,17 +140,25 @@ exports.loadkey = function(id, key, secret)
 }
 
 exports._Local = function(pair){
-  if (!(pair && pair.key && pair.secret))
-    return Promise.reject(new Error("must supply valid keypair"))
-
-
   var self = this;
 
   self.key = {};
+  this.load = (!(pair && pair.key && pair.secret)) ? Promise.reject(new Error("must supply valid keypair"))
+                                                   : exports._loadkey(self.key,pair.key, pair.secret);
 
+
+  self.decrypt = function cs2a_local_decrypt(body){
+    return self.load.then(function cs2a_local_loaded_decrypt(){
+      console.log("LOCAL LOADED DECRYPT")
+      return (!Buffer.isBuffer(body))      ? Promise.reject(new Error("Message body must be a Buffer"))
+           : (body.length < 256+12+256+16) ? Promise.reject(new Error("Message body below minimum length for valid encrypted cs2a packet"))
+           : aes_unpack(body);
+    }).then(aes_decrypt)
+  };
 
   function aes_unpack(body){
     var keyBytes = body.slice(0,256)
+    console.log("AES UNPACK")
 
     return self.key.decrypt(keyBytes)
                    .then(function(keys){
@@ -170,6 +178,7 @@ exports._Local = function(pair){
   }
 
   function aes_decrypt(alg){
+    console.log("AES decrypt")
     return subtle.importKey("raw",alg.raw, {name: "AES-GCM"},false,["encrypt","decrypt"])
           .then(function(key){
             return subtle.decrypt(alg, key, alg.body)
@@ -181,59 +190,7 @@ exports._Local = function(pair){
             return ret;
           })
   }
-
-
-
-    /*
-    // rsa decrypt the keys
-    return self.key.decrypt(b.slice(0,256))
-        .then(function(keys){
-          console.log("keys",keys.length)
-          if(!keys || keys.length != (65+32)) return false;
-          var body = b;
-          var alg = { name: "AES-GCM"
-           , tagLength: 128
-           , iv : body.slice(256,256+12)
-           , additionalData: body.slice(0,256)
-           };
-
-           console.log("decrypt keys")
-           return subtle.importKey("raw",keys.slice(65,65+32), {name: "AES-GCM"},false,["encrypt","decrypt"])
-                 .then(function(key){
-                   return subtle.decrypt(alg, key, body.slice(256+12))
-                 })
-                 .then(function(body){
-                   console.log("decrypt", body)
-
-                   var b = new Buffer(new Uint8Array(body))
-                   console.log(b)
-                   var ret = b.slice(0,b.length-256);
-                   ret._keys = keys;
-                   ret._sig = b.slice(ret.length);
-                   return ret;
-                 })
-        });
-        */
-
-
-  self.decrypt = function cs2a_local_decrypt(body){
-    if(!Buffer.isBuffer(body)) return false;
-    if(body.length < 256+12+256+16) return false;
-    var b = body
-
-    return aes_unpack(body).then(aes_decrypt);
-  }
-
-
-  function return_self(){
-    console.log("RETURN SELF")
-    return self;
-  }
-
-  return exports._loadkey(self.key,pair.key, pair.secret)
-                .then(return_self);
-
-
+  return this;
 }
 
 exports.Local = function(pair)
@@ -277,73 +234,69 @@ exports.Local = function(pair)
   };
 }
 
-function subtle_remote(remote_public){
-  var self = this;
-  self.key = {};
 
-  return exports._loadkey(self.key, remote_public)
-               .then(function(){
-                 return subtle.generateKey({name : "ECDH", namedCurve: "P-256"},true, ["deriveBits"]);
-               })
-               .then(function (ecdhkeys){
-                 self.ephemeral = ecdhkeys;
-                 return subtle.exportKey("spki", ecdhkeys.publicKey)
+function cs2a_load_remote(self, publicKey){
+  return  exports._loadkey(self.key, publicKey)
+                 .then(function(){
+                   return subtle.generateKey({name : "ECDH", namedCurve: "P-256"},true, ["deriveBits"]);
+                 })
+                 .then(function (ecdhkeys){
+                   self.ephemeral = ecdhkeys;
+                   return subtle.exportKey("spki", ecdhkeys.publicKey)
 
-               })
-               .then(function (eccpub){
-                 return self.key.encrypt(Buffer.concat([eccpub.slice(eccpub.length - 65), self.secret]));
-               })
-               .then(function (keyBytes){
-                 self.keys = keyBytes;
-                 return subtle.importKey("raw", self.secret,{name:"AES-GCM",tagLength:128}, false,["encrypt","decrypt"])
-               });
+                 })
+                 .then(function (eccpub){
+                   return self.key.encrypt(Buffer.concat([eccpub.slice(eccpub.length - 65), self.secret]));
+                 })
+                 .then(function (keyBytes){
+                   self.keys = keyBytes;
+                   self.token = NodeCrypto.createHash('sha256').update(keyBytes.slice(0,16)).digest().slice(0,16);
+                   return subtle.importKey("raw", self.secret,{name:"AES-GCM",tagLength:128}, false,["encrypt","decrypt"])
+                 });
 }
 
-function cs2a_remote(aeskey){
-  this.token = NodeCrypto.createHash('sha256').update(this.keys.slice(0,16)).digest().slice(0,16);
-
-  var iv   = NodeCrypto.randomBytes(12)
-    , self = this;
+exports._Remote = function(publicKey)
+{
+  this.key = {};
+  this.secret = NodeCrypto.randomBytes(32);
+  this.load = cs2a_load_remote(this, publicKey);
+  var self = this;
+  var iv   = NodeCrypto.randomBytes(12);
 
   this.verify = function(local, body){
     // decrypt it first
     var cached;
-    return local.decrypt(body)
-         .then(function(inner){
-           var toVerify = Buffer.concat([body.slice(0,256+12),inner])
-           cached = inner._keys;
-           return self.key.verify( toVerify, inner._sig)
-         })
-         .then(function(verified){
-           if (verified)
-             self.cached = cached;
-           return verified;
-         });
-
+    return self.load.then(function cs2a_remote_verify(){
+      return local.decrypt(body);
+    }).then(function(inner){
+      var toVerify = Buffer.concat([body.slice(0,256+12),inner])
+      cached = inner._keys;
+      return self.key.verify( toVerify, inner._sig)
+    })
+    .then(function(verified){
+      if (verified)
+        self.cached = cached;
+      return verified;
+    });
   };
 
   this.encrypt = function(local, inner){
-    var seq = iv.readUInt32LE(0);
+    var seq = iv.readUInt32LE(0)
+      , aesKey;
+
     iv.writeUInt32LE(++seq,0);
 
     // generate the signature
-    return local.key.sign(Buffer.concat([self.keys,iv,inner]))
-                    .then(function(sig){
-                      var body = Buffer.concat([inner, sig])
-                      return subtle.encrypt({name: "AES-GCM", tagLength:128,iv:iv, additionalData : self.keys}, aeskey, body);
-                    })
-                    .then(function(encrypted){
-                      return Buffer.concat([self.keys,iv,encrypted]);
-                    });
+    return self.load.then(function cs2a_remote_encrypt1(aes){
+      aesKey = aes;
+      return local.key.sign(Buffer.concat([self.keys,iv,inner]));
+    }).then(function cs2a_remote_encrypt2(sig){
+      var body = Buffer.concat([inner, sig]);
+      return subtle.encrypt({name: "AES-GCM", tagLength:128,iv:iv, additionalData : self.keys}, aesKey, body);
+    }).then(function cs2a_remote_encrypt3(encrypted){
+      return Buffer.concat([self.keys,iv,encrypted]);
+    });
   };
-  return this;
-
-}
-exports._Remote = function(key)
-{
-  this.secret = NodeCrypto.randomBytes(32);
-
-  return subtle_remote.bind(this)(key).then(cs2a_remote.bind(this));
 }
 
 exports.Remote = function(key)
@@ -410,7 +363,7 @@ exports.Remote = function(key)
 
 var spkiECCPad = new Buffer("3056301006042b81047006082a8648ce3d030107034200","hex")
 
-function subtle_ephemeral(remote, keys){
+function cs2a_load_ephemeral(remote, keys){
   var aesBytes = keys.slice(65)
     , eccBytes = keys.slice(0, 65)
     , eccSPKI  = Buffer.concat([spkiECCPad,eccBytes]);
@@ -441,44 +394,37 @@ function subtle_ephemeral(remote, keys){
         })
 }
 
-function cs2a_ephemeral(keys){
+exports._Ephemeral = function(remote, outer, inner){
+  var keys = remote.cached || (inner._keys)
+    , self = this
+    , iv   = NodeCrypto.randomBytes(12);
 
-  var encKey = keys.encKey
-    , decKey = keys.decKey
-    , iv  = NodeCrypto.randomBytes(12);
+  this.load = cs2a_load_ephemeral(remote, keys)
+  this.token = NodeCrypto.createHash('sha256').update(outer.slice(0,16)).digest().slice(0,16);
+
 
   this.encrypt = function cs2a_ephemeral_encrypt(inner){
     // incriment the iv
     var seq = iv.readUInt32LE(0);
     iv.writeUInt32LE(++seq,0);
 
-    return subtle.encrypt({name: "AES-GCM", iv:iv, additionalData: new Buffer(0), tagLength: 128}, encKey, inner)
-                 .then(function(cbody){
-                    //attach the iv
-                    return Buffer.concat([iv, cbody]);
-                  });
-
+    return self.load.then(function cs2a_ephemeral_encrypt1(keys){
+      return subtle.encrypt({name: "AES-GCM", iv:iv, additionalData: new Buffer(0), tagLength: 128}, keys.encKey, inner)
+    }).then(function(cbody){
+      //attach the iv
+      return Buffer.concat([iv, cbody]);
+    });
   };
 
   this.decrypt = function cs2a_ephemeral_decrypt(outer){
-    return subtle.decrypt({ name: "AES-GCM"
-                          , iv:outer.slice(0,12)
-                          , additionalData: new Buffer(0)
-                          , tagLength: 128
-                          }
-                          , decKey
-                          , outer.slice(12));
-
-  }
+    return self.load.then(function cs2a_ephemeral_decrypt1(keys){
+      return subtle.decrypt({ name: "AES-GCM", iv:outer.slice(0,12), additionalData: new Buffer(0), tagLength: 128}
+                            , keys.decKey
+                            , outer.slice(12));
+    });
+  };
 
   return this;
-}
-
-exports._Ephemeral = function(remote, outer, inner){
-  var keys = remote.cached || (inner._keys);
-  this.token = NodeCrypto.createHash('sha256').update(outer.slice(0,16)).digest().slice(0,16);
-
-  return subtle_ephemeral(remote, keys).then(cs2a_ephemeral.bind(this));
 }
 
 exports.Ephemeral = function(remote, outer, inner)
