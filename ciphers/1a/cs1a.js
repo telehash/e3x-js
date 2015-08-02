@@ -40,7 +40,7 @@ exports._Local = function(pair){
     return Promise.resolve(local.decrypt(body))
   }
 
-  return Promise.resolve(this)
+  return this;
 }
 
 exports._Remote = function(key){
@@ -52,7 +52,7 @@ exports._Remote = function(key){
 
   this.verify  = remote._verify;
 
-  return Promise.resolve(this)
+  return this;
 }
 
 exports._Ephemeral = function(remote, body){
@@ -66,7 +66,7 @@ exports._Ephemeral = function(remote, body){
     return Promise.resolve(ephemeral.decrypt(body))
   }
 
-  return Promise.resolve(this)
+  return this;
 }
 
 exports.Local = function(pair)
