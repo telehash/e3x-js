@@ -64,12 +64,14 @@ if(exports.err) return false;
 self.debug = debug;
 self.decrypt = function(message)
 {
-  if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
+  if return false;
   var csid = message.head.toString('hex');
-  if(!self.locals[csid]) return false;
-  var inner = self.locals[csid].decrypt(message.body);
-  if(!inner) return false;
-  return lob.decode(inner);
+
+  return (typeof message != 'object'
+          || !Buffer.isBuffer(message.body)
+          || message.head.length != 1) ? Promise.reject(new Error("invalid message"))
+       : (!self.locals[csid])          ? Promise.reject(new Error("unsupported Cipher Set"))
+       : self.locals[csid].decrypt(message.body).then(lob.decode);
 }
 
 self.exchange = function(args)
@@ -115,53 +117,45 @@ self.exchange = function(args)
     return false;
   }
 
+  //PROMISE
   x.verify = function(message){
     return cs.verify(self.locals[csid], message.body);
   };
 
-
+  //PROMISE
   x.encrypt = function(inner){
-    var body = cs.encrypt(self.locals[csid], inner);
-    if(!body) return false;
-    return lob.packet(csid1,body);
+    return cs.encrypt(self.locals[csid], inner).then(function(body){ lob.packet(csid1, body)});
   };
 
+  //PROMISE
   x.receive = function(packet){
     if(!lob.isPacket(packet) || packet.head.length !== 0) return x.error('invalid packet');
     if(!x.session) return x.error('handshake sync required');
-    var buf = x.session.decrypt(packet.body.slice(16));
-    if(!buf) return x.error('decrypt failed: '+x.session.err);
-    if(x.z == 1)
-    {
-
-    }else{
-      var inner = lob.decode(buf);
-    }
-    return inner;
+    return x.session.decrypt(packet.body.slice(16))
+                    .then(lob.decode);
   };
 
+  //PROMISE
   x.send = function(inner, arg){
     if(typeof inner != 'object') return x.error('invalid inner packet');
     if(!x.sending) return x.error('send with no sending handler');
     if(!x.session) return x.error('send with no session');
     if(!lob.isPacket(inner)) inner = lob.packet(inner.json,inner.body); // convenience
     self.debug('channel encrypting',inner.json,inner.body.length);
-    /*
-    if(x.z == 1)
-    {
-      self.debug('compressing w/ cbor');
-      var zbuf = cbor.encode(inner.json.c);
-      // TODO ...
-    }
-    */
-    var enc = x.session.encrypt(inner);
-    if(!enc) return x.error('session encryption failed: '+x.session.err);
-    // use senders token for routing
-    var packet = lob.packet(null,Buffer.concat([x.session.token,enc]))
-    if(typeof x.sending == 'function') x.sending(packet, arg);
-    return packet;
+
+    x.sending = (typeof x.sending === "function") ? x.sending : function noop(){};
+
+    x.session.encrypt(inner)
+             .then(function(enc){
+               return lob.packet(null, Buffer.concat([x.session.token,enc]));
+             })
+             .then(function(packet){
+               x.sending(packet, arg);
+               return packet;
+             });
   };
 
+  //TODO
   x.sync = function(handshake, inner){
     if(!handshake) return false;
     if(!inner) inner = self.decrypt(handshake); // optimization to pass one in already done
