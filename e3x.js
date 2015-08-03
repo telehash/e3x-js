@@ -41,6 +41,28 @@ exports.generate = function(cbDone){
   });
 }
 
+exports._generate = function(cbDone){
+
+  // figure out which ciphersets have generators first
+  var generators = {};
+  Object.keys(csets).forEach(function(csid){
+    if(!csets[csid] || !csets[csid].generate) return;
+    generators[csid] = csets[csid]._generate;
+  });
+  if(!Object.keys(generators).length) return cbDone("no ciphersets");
+
+  // async generate all of them
+  var pairs = {};
+  var errored;
+  Object.keys(generators).forEach(function(csid){
+    generators[csid]().then(function(pair){
+      pairs[csid] = pair;
+      // async all done
+      if(Object.keys(pairs).length == Object.keys(generators).length) return cbDone(undefined, pairs);
+    }).catch(cbDone);
+  });
+}
+
 exports._self = function(args){
 if(typeof args != 'object' || typeof args.pairs != 'object')
 {
@@ -55,7 +77,7 @@ exports.err = undefined;
 Object.keys(csets).forEach(function(csid){
   if(!args.pairs[csid]) return;
   self.keys[csid] = args.pairs[csid].key;
-  self.locals[csid] = new csets[csid].Local(args.pairs[csid]);
+  self.locals[csid] = new csets[csid]._Local(args.pairs[csid]);
   exports.err = exports.err || self.locals[csid].err;
 });
 if(exports.err) return false;
@@ -64,14 +86,18 @@ if(exports.err) return false;
 self.debug = debug;
 self.decrypt = function(message)
 {
-  if return false;
   var csid = message.head.toString('hex');
+  console.log(csid + " decrypt")
 
   return (typeof message != 'object'
           || !Buffer.isBuffer(message.body)
           || message.head.length != 1) ? Promise.reject(new Error("invalid message"))
        : (!self.locals[csid])          ? Promise.reject(new Error("unsupported Cipher Set"))
-       : self.locals[csid].decrypt(message.body).then(lob.decode);
+       : (self.locals[csid].decrypt(message.body).then(function(inner){
+           var decoded = lob.decode(inner);
+           if (!decoded) throw new Error("handshake invalid")
+           return decoded;
+         }));
 }
 
 self.exchange = function(args)
@@ -90,13 +116,17 @@ self.exchange = function(args)
   {
     self.err = 'no support for cs'+csid;
   }else{
-    var cs = new csets[csid].Remote(key);
+    var cs = new csets[csid]._Remote(key);
     self.err = cs.err;
   }
   if(self.err) return false;
 
-  var x = {csid:csid, key:key, cs:cs, token:cs.token, isExchange:true, z:0};
-  x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
+  var x = {csid:csid, key:key, cs:cs, isExchange:true, z:0};
+  x.load = cs.load.then(function(){
+    x.token = cs.token;
+    x.id = args.id || cs.token.toString('hex'); // app can provide it's own unique identifiers;
+  })
+
   // get our sort order by compairing the endpoint keys
   x.order = (bufsort(self.keys[csid],key) == key) ? 2 : 1;
 
@@ -124,7 +154,12 @@ self.exchange = function(args)
 
   //PROMISE
   x.encrypt = function(inner){
-    return cs.encrypt(self.locals[csid], inner).then(function(body){ lob.packet(csid1, body)});
+    console.log("CSID", csid, self.locals[csid], self.locals)
+    return cs.encrypt(self.locals[csid], inner)
+              .then(function(body){
+                console.log("encrypted", body)
+                return lob.packet(csid1, body)
+              });
   };
 
   //PROMISE
@@ -144,35 +179,37 @@ self.exchange = function(args)
     inner = (!lob.isPacket(inner)) ? lob.packet(inner.json,inner.body) : inner; // convenience
 
     self.debug('channel encrypting',inner.json,inner.body.length);
+    console.log("X.sending", x.sending.toString(), typeof x.sending)
+    x.sending = (typeof x.sending == "function") ? x.sending : function noop(){};
 
-    x.sending = (typeof x.sending === "function") ? x.sending : function noop(){};
-
-    return x.session.encrypt(inner)
-                     .then(function(enc){
-                       return lob.packet(null, Buffer.concat([x.session.token,enc]));
-                     })
-                     .then(function(packet){
-                       x.sending(packet, arg);
-                       return packet;
-                     });
+    return x.load.then(function(){
+      console.log("loaded")
+       return x.session.encrypt(inner);
+     }).then(function(enc){
+       console.log("x.session.token", x.session.token)
+       return lob.packet(null, Buffer.concat([x.session.token,enc]));
+     })
+     .then(function(packet){
+       console.log("x.sending", x.sending.toString())
+       x.sending(packet, arg);
+       return packet;
+     });
   };
 
   //PROMISE
   x.sync = function(handshake, inner){
     if(!handshake) return false;
-    if(!inner) inner = self.decrypt(handshake); // optimization to pass one in already done
-    if(!inner) return false;
-    if(!x.verify(handshake)) return false;
-
-    x.verify(handshake)
-     .then(function(ver){
+    var getInner = (!inner) ? self.decrypt(handshake) : Promise.resolve(inner);
+    return getInner.then(function(inner){
+      return x.verify(handshake).then(function(ver){
        if (!ver)
          throw new Error("handshake failed to verify")
 
        var sid = handshake.slice(0,16).toString('hex'); // stable token  bytes
        if(x.sid != sid)
        {
-         x.session = new csets[csid].Ephemeral(cs, handshake.body);
+         console.log("new ephemeral")
+         x.session = new csets[csid]._Ephemeral(cs, handshake.body);
          x.sid = sid;
          x.z = parseInt(inner.z);
          // free up any gone channels since id's can be re-used now
@@ -196,7 +233,8 @@ self.exchange = function(args)
 
        // signal to send a handshake
        return false;
-     })
+     });
+   });
   };
 
   // resend any packets we can
@@ -234,6 +272,7 @@ self.exchange = function(args)
   x.at(Math.floor(Date.now()/1000));
 
   // be handy handshaker
+  // PROMISE
   x.handshake = function(inner){
     if(!inner)
     {
@@ -407,6 +446,7 @@ self.exchange = function(args)
     }
 
     chan.send = function(packet){
+      console.log("chan send begin")
       if(typeof packet != 'object') return self.debug('invalid send packet',packet);
       if(!packet.json) packet.json = {};
       packet.json.c = chan.id;
@@ -423,6 +463,7 @@ self.exchange = function(args)
       // unreliable just send straight away
       if(!chan.reliable)
       {
+        console.log("unreliable send")
         return x.send(lob.packet(packet.json,packet.body));
       }
 
@@ -436,7 +477,7 @@ self.exchange = function(args)
 
       // add optional ack/miss and send
       chan.ack(packet);
-
+      console.log('chan send end')
       return chan;
     };
 
@@ -561,11 +602,12 @@ exports.self = function(args){
   self.debug = debug;
   self.decrypt = function(message)
   {
-    if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return false;
+    if(typeof message != 'object' || !Buffer.isBuffer(message.body) || message.head.length != 1) return  false;
     var csid = message.head.toString('hex');
     if(!self.locals[csid]) return false;
     var inner = self.locals[csid].decrypt(message.body);
     if(!inner) return false;
+    console.log("!!!!", inner)
     return lob.decode(inner);
   }
 
@@ -669,7 +711,7 @@ exports.self = function(args){
       var sid = handshake.slice(0,16).toString('hex'); // stable token bytes
       if(x.sid != sid)
       {
-        var session = new csets[csid].Ephemeral(cs, handshake.body);
+        var session = new csets[csid]._Ephemeral(cs, handshake.body);
         if(session.err) return x.error('session error: '+session.err);
         self.debug('new ephemeral');
         x.session = session;
