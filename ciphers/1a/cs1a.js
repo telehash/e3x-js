@@ -41,10 +41,17 @@ exports._generate = function(){
 
 exports._Local = function(pair){
   var local = new exports.Local(pair)
-
+  this.load = Promise.resolve()
   this.token = local.token
+  this.secret = local.secret
+  this.key = local.key
+  this.err = local.err;
   this.decrypt = function(body){
-    return Promise.resolve(local.decrypt(body))
+    var decrypted = local.decrypt(body);
+
+    console.log("decrypted", decrypted)
+
+    return (decrypted) ? Promise.resolve(decrypted) : Promise.reject(new Error("cs1a local failed to decrypt"))
   }
 
   return this;
@@ -53,7 +60,10 @@ exports._Local = function(pair){
 exports._Remote = function(key){
   var remote = new exports.Remote(key)
   this.token = remote.token
+  this.load = Promise.resolve()
+  this.ephemeral = remote.ephemeral
   this.encrypt = function(a1, a2){
+    console.log("encrypt1")
     return Promise.resolve(remote.encrypt(a1, a2))
   }
 
@@ -65,12 +75,17 @@ exports._Remote = function(key){
 exports._Ephemeral = function(remote, body){
   var ephemeral = new exports.Ephemeral(remote, body)
   this.token = ephemeral.token
+  this.load = Promise.resolve()
   this.encrypt = function(body){
-    return Promise.resolve(ephemeral.encrypt(body))
+    console.log("encrypt", body)
+    var enc = ephemeral.encrypt(body);
+    console.log("ENC", enc)
+    return Promise.resolve(enc)
   }
 
   this.decrypt = function(body){
-    return Promise.resolve(ephemeral.decrypt(body))
+    var decrypted = ephemeral.decrypt(body)
+    return (decrypted) ? Promise.resolve(decrypted) : Promise.reject(new Error("cs3a ephemeral decrypt failed"));
   }
 
   return this;
@@ -90,31 +105,24 @@ exports.Local = function(pair)
 
   // decrypt message body and return the inner
   self.decrypt = function(body){
-    if(!Buffer.isBuffer(body)) return false;
-    if(body.length < 21+4+4) return false;
+    if(!Buffer.isBuffer(body)) throw new Error("encrypted body must be a buffer");
+    if(body.length < 21+4+4) throw new Error("invalid body length");
 
     var keybuf = body.slice(0,21);
     var iv = body.slice(21,21+4);
     var innerc = body.slice(21+4,body.length-4);
     // mac is handled during verify stage
 
-    try{
-      var ephemeral = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, keybuf, true);
-      var secret = self.secret.deriveSharedSecret(ephemeral);
-    }catch(E){
-      return false;
-    }
+    var ephemeral = new NodeCrypto.ecc.ECKey(NodeCrypto.ecc.ECCurves.secp160r1, keybuf, true);
+    var secret = self.secret.deriveSharedSecret(ephemeral);
+
 
     var key = fold(1,NodeCrypto.createHash("sha256").update(secret).digest());
     var ivz = new Buffer(12);
     ivz.fill(0);
 
     // aes-128 decipher the inner
-    try{
-      var inner = NodeCrypto.aes(false, key, Buffer.concat([iv,ivz]), innerc);
-    }catch(E){
-      return false;
-    }
+    var inner = NodeCrypto.aes(false, key, Buffer.concat([iv,ivz]), innerc);
 
     return inner;
   };
@@ -174,12 +182,14 @@ exports.Remote = function(key)
   };
 
   self.encrypt = function(local, inner){
+    console.log('cs1a remote encrypt err1')
     if(!Buffer.isBuffer(inner)) return false;
 
     // get the shared secret to create the iv+key for the open aes
     try{
       var secret = self.ephemeral.deriveSharedSecret(self.endpoint);
     }catch(E){
+      console.log("cs1a remote encrypt err2")
       return false;
     }
     var key = fold(1,NodeCrypto.createHash("sha256").update(secret).digest());
@@ -193,6 +203,7 @@ exports.Remote = function(key)
       var innerc = NodeCrypto.aes(true, key, Buffer.concat([iv,ivz]), inner);
       var macsecret = local.secret.deriveSharedSecret(self.endpoint);
     }catch(E){
+      console.log("cs1a remote encrypt err3", E)
       return false;
     }
 
@@ -233,6 +244,7 @@ exports.Ephemeral = function(remote, body)
       .update(remote.ephemeral.PublicKey)
       .digest());
   }catch(E){
+    console.log("ephemeral load error", E)
     self.err = E;
   }
 
@@ -269,7 +281,7 @@ exports.Ephemeral = function(remote, body)
     // create the hmac
     var key = Buffer.concat([self.encKey,iv.slice(0,4)]);
     var mac = fold(3,NodeCrypto.createHmac("sha256", key).update(cbody).digest());
-
+    console.log("CS1a ephemeral encrypt")
     // return final body
     return Buffer.concat([iv.slice(0,4),cbody,mac]);
   };

@@ -22,8 +22,11 @@ exports._generate = function(){
 
 exports._Local = function(pair){
   var local = new exports.Local(pair)
+  this.load = Promise.resolve()
   this.decrypt = function(body){
-    return Promise.resolve(local.decrypt(body))
+    var decrypted = local.decrypt(body);
+
+    return (decrypted) ? Promise.resolve(local.decrypt(body)) : Promise.reject(new Error("cs3a local failed to decrypt"))
   }
 
   return this;
@@ -31,8 +34,9 @@ exports._Local = function(pair){
 
 exports._Remote = function(key){
   var remote = new exports.Remote(key)
-
+  this.load = Promise.resolve()
   this.encrypt = function(a1, a2){
+    console.log("encrypt3")
     return Promise.resolve(remote.encrypt(a1, a2))
   }
 
@@ -46,13 +50,14 @@ exports._Remote = function(key){
 
 exports._Ephemeral = function(remote, body){
   var ephemeral = new exports.Ephemeral(remote, body)
-
+  this.load = Promise.resolve()
   this.encrypt = function(body){
     return Promise.resolve(ephemeral.encrypt(body))
   }
 
   this.decrypt = function(body){
-    return Promise.resolve(ephemeral.decrypt(body))
+    var decrypted = ephemeral.decrypt(body)
+    return (decrypted) ? Promise.resolve(decrypted) : Promise.reject(new Error("cs3a ephemeral decrypt failed"));
   }
 
   return this;
