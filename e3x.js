@@ -198,7 +198,7 @@ self.exchange = function(args)
 
   //PROMISE
   x.sync = function(handshake, inner){
-    if(!handshake) return false;
+    if(!handshake) return Promise.resolve(false);
     var getInner = (!inner) ? self.decrypt(handshake) : Promise.resolve(inner);
     return getInner.then(function(inner){
       return x.verify(handshake).then(function(ver){
