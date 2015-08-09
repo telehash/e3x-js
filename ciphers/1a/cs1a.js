@@ -48,9 +48,6 @@ exports._Local = function(pair){
   this.err = local.err;
   this.decrypt = function(body){
     var decrypted = local.decrypt(body);
-
-    console.log("decrypted", decrypted)
-
     return (decrypted) ? Promise.resolve(decrypted) : Promise.reject(new Error("cs1a local failed to decrypt"))
   }
 
@@ -152,7 +149,6 @@ exports.Remote = function(key)
       var iv = body.slice(21,21+4);
     return subtle.importKey("raw",Buffer.concat([secret,iv]),Subtle_Options.HMAC,  true, Subtle_Options.HMAC.usage)
           .then(function(key){
-            console.log("HMAC KEY", key)
             return subtle.sign({name:"HMAC"}, key, body.slice(0,body.length-4))
           })
           .then(function(sig){
@@ -182,7 +178,6 @@ exports.Remote = function(key)
   };
 
   self.encrypt = function(local, inner){
-    console.log('cs1a remote encrypt err1')
     if(!Buffer.isBuffer(inner)) return false;
 
     // get the shared secret to create the iv+key for the open aes
