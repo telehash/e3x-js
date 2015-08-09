@@ -87,7 +87,7 @@ self.debug = debug;
 self.decrypt = function(message)
 {
   var csid = message.head.toString('hex');
-  console.log(csid + " decrypt")
+  //console.log(csid + " decrypt")
 
   return (typeof message != 'object'
           || !Buffer.isBuffer(message.body)
@@ -154,10 +154,10 @@ self.exchange = function(args)
 
   //PROMISE
   x.encrypt = function(inner){
-    console.log("CSID", csid, self.locals[csid], self.locals)
+    //console.log("CSID", csid, self.locals[csid], self.locals)
     return cs.encrypt(self.locals[csid], inner)
               .then(function(body){
-                console.log("encrypted", body)
+                //console.log("encrypted", body)
                 return lob.packet(csid1, body)
               });
   };
@@ -179,18 +179,18 @@ self.exchange = function(args)
     inner = (!lob.isPacket(inner)) ? lob.packet(inner.json,inner.body) : inner; // convenience
 
     self.debug('channel encrypting',inner.json,inner.body.length);
-    console.log("X.sending", x.sending.toString(), typeof x.sending)
+    //console.log("X.sending", x.sending.toString(), typeof x.sending)
     x.sending = (typeof x.sending == "function") ? x.sending : function noop(){};
 
     return x.load.then(function(){
-      console.log("loaded")
+      //console.log("loaded")
        return x.session.encrypt(inner);
      }).then(function(enc){
-       console.log("x.session.token", x.session.token)
+       ////console.log("x.session.token", x.session.token.toString("hex"))
        return lob.packet(null, Buffer.concat([x.session.token,enc]));
      })
      .then(function(packet){
-       console.log("x.sending", x.sending.toString())
+       ////console.log("x.sending", x.sending.toString())
        x.sending(packet, arg);
        return packet;
      });
@@ -208,7 +208,7 @@ self.exchange = function(args)
        var sid = handshake.slice(0,16).toString('hex'); // stable token  bytes
        if(x.sid != sid)
        {
-         console.log("new ephemeral")
+         //console.log("new ephemeral")
          x.session = new csets[csid]._Ephemeral(cs, handshake.body);
          x.sid = sid;
          x.z = parseInt(inner.z);
@@ -446,7 +446,7 @@ self.exchange = function(args)
     }
 
     chan.send = function(packet){
-      console.log("chan send begin")
+      //console.log("chan send begin")
       if(typeof packet != 'object') return self.debug('invalid send packet',packet);
       if(!packet.json) packet.json = {};
       packet.json.c = chan.id;
@@ -463,7 +463,7 @@ self.exchange = function(args)
       // unreliable just send straight away
       if(!chan.reliable)
       {
-        console.log("unreliable send")
+        //console.log("unreliable send")
         return x.send(lob.packet(packet.json,packet.body));
       }
 
@@ -477,7 +477,7 @@ self.exchange = function(args)
 
       // add optional ack/miss and send
       chan.ack(packet);
-      console.log('chan send end')
+      //console.log('chan send end')
       return chan;
     };
 
