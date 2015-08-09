@@ -3,6 +3,7 @@ e3x: End-to-End Encrypted eXchange (javascript)
 
 [![Build Status](https://travis-ci.org/telehash/e3x-js.svg?branch=master)](https://travis-ci.org/telehash/e3x-js)
 
+
 This module implements all of [e3x](https://github.com/telehash/telehash.org/tree/master/v3/e3x) in javascript as a node and browserify module.  It is used by [telehash-js](https://github.com/telehash/telehash-js) which is designed to provide a friendly higher level api, whereas this is low level and expects the application to manage all state tracking.
 
 ## Usage
