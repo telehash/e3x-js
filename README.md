@@ -15,12 +15,12 @@ var e3x = require('e3x');
 var secrets = e3x.generate();
 
 var self = e3x.self(args);
-if(!self) console.log(e3x.err);
+if(!self) //console.log(e3x.err);
 
 var inner = self.decrypt(message);
-  
+
 var exchange = self.exchange(args);
-if(!exchange) console.log(self.err);
+if(!exchange) //console.log(self.err);
 
 exchange.token; // 16 byte buffer
 exchange.sending = function(packet){ }
@@ -35,7 +35,7 @@ var bool = exchange.sync(handshake); // processes handshake to do all setup stuf
 var handshake = exchange.handshake(); // returns current handshake to be sent
 
 var channel = exchange.channel(open);
-if(!channel) console.log(exchange.err);
+if(!channel) //console.log(exchange.err);
 
 var bool = channel.receive(inner); // true if accepted
 channel.send(packet); // calls exchange.sending()
