@@ -26,7 +26,6 @@ describe('cs1a', function(){
       expect(pair.key.length).to.be.equal(21);
       expect(Buffer.isBuffer(pair.secret)).to.be.equal(true);
       expect(pair.secret.length).to.be.equal(20);
-//      console.log("KEY",pair.key.toString('hex'),"SECRET",pair.secret.toString('hex'));
       done(err);
     });
   });
@@ -70,7 +69,6 @@ describe('cs1a', function(){
     var message = remote.encrypt(local, new Buffer('0000','hex'));
     expect(Buffer.isBuffer(message)).to.be.equal(true);
     expect(message.length).to.be.equal(31);
-//    console.log("mbodyAB",message.toString('hex'));
   });
 
   it('should remote encrypt', function(){
@@ -79,7 +77,6 @@ describe('cs1a', function(){
     var message = remote.encrypt(local, new Buffer('0000','hex'));
     expect(Buffer.isBuffer(message)).to.be.equal(true);
     expect(message.length).to.be.equal(31);
-//    console.log("mbodyBA",message.toString('hex'));
   });
 
   it('should remote verify', function(done){
@@ -149,24 +146,3 @@ describe('cs1a', function(){
   });
 
 });
-
-/*
-// dummy functions
-cs1a.install({pdecode:function(){console.log("pdecode",arguments);return {}},pencode:function(){console.log("pencode",arguments);return new Buffer(0)}});
-
-var a = {parts:{}};
-var b = {parts:{}};
-cs1a.genkey(a,function(){
-  console.log("genkey",a);
-  cs1a.genkey(b,function(){
-    console.log("genkey",b);
-    var id = {cs:{"1a":{}}};
-    cs1a.loadkey(id.cs["1a"],a["1a"],a["1a_secret"]);
-    var to = {};
-    cs1a.loadkey(to,b["1a"]);
-    console.log(id,to);
-    var open = cs1a.openize(id,to,{});
-    console.log("opened",open);
-  });
-});
-*/
