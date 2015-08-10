@@ -27,34 +27,6 @@ exports.generate = function(cbDone){
   var pairs = {};
   var errored;
   Object.keys(generators).forEach(function(csid){
-    generators[csid](function(err,pair){
-      if(errored) return;
-      if(err)
-      {
-        errored = true;
-        return cbDone(csid+': '+err);
-      }
-      pairs[csid] = pair;
-      // async all done
-      if(Object.keys(pairs).length == Object.keys(generators).length) return cbDone(undefined, pairs);
-    });
-  });
-}
-
-exports._generate = function(cbDone){
-
-  // figure out which ciphersets have generators first
-  var generators = {};
-  Object.keys(csets).forEach(function(csid){
-    if(!csets[csid] || !csets[csid].generate) return;
-    generators[csid] = csets[csid]._generate;
-  });
-  if(!Object.keys(generators).length) return cbDone("no ciphersets");
-
-  // async generate all of them
-  var pairs = {};
-  var errored;
-  Object.keys(generators).forEach(function(csid){
     generators[csid]().then(function(pair){
       pairs[csid] = pair;
       // async all done
@@ -63,7 +35,7 @@ exports._generate = function(cbDone){
   });
 }
 
-exports._self = function(args){
+exports.self = function(args){
 if(typeof args != 'object' || typeof args.pairs != 'object')
 {
   exports.err = 'invalid args';
@@ -77,7 +49,7 @@ exports.err = undefined;
 Object.keys(csets).forEach(function(csid){
   if(!args.pairs[csid]) return;
   self.keys[csid] = args.pairs[csid].key;
-  self.locals[csid] = new csets[csid]._Local(args.pairs[csid]);
+  self.locals[csid] = new csets[csid].Local(args.pairs[csid]);
   exports.err = exports.err || self.locals[csid].err;
 });
 if(exports.err) return false;
@@ -116,7 +88,7 @@ self.exchange = function(args)
   {
     self.err = 'no support for cs'+csid;
   }else{
-    var cs = new csets[csid]._Remote(key);
+    var cs = new csets[csid].Remote(key);
     self.err = cs.err;
   }
   if(self.err) return false;
@@ -209,7 +181,7 @@ self.exchange = function(args)
        if(x.sid != sid)
        {
          //console.log("new ephemeral")
-         x.session = new csets[csid]._Ephemeral(cs, handshake.body);
+         x.session = new csets[csid].Ephemeral(cs, handshake.body);
          x.sid = sid;
          x.z = parseInt(inner.z);
          // free up any gone channels since id's can be re-used now
