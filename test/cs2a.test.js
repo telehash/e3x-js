@@ -22,7 +22,7 @@ describe('cs2a', function(){
   });
 
   it('should grow a pair', function(done){
-    this.timeout(10000)
+    this.timeout(100000)
     cs2a._generate()
         .then(function(pair){
           done()
