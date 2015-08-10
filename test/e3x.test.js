@@ -36,7 +36,7 @@ describe('e3x', function(){
 
   it('generates keys', function(done){
 
-    e3x._generate(function(err,pairs){
+    e3x.generate(function(err,pairs){
       expect(err).to.not.exist;
       console.log("pairs",pairs['1a'].key.length,pairs['2a'].key.length,pairs['3a'].key.length);
       expect(pairs).to.be.an('object');
@@ -49,7 +49,7 @@ describe('e3x', function(){
   });
 
   it('loads self', function(){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     expect(e3x.err).to.not.exist;
     expect(self).to.be.an('object');
     expect(self.decrypt).to.be.a('function');
@@ -57,7 +57,7 @@ describe('e3x', function(){
   });
 
   it('creats an exchange', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.load.then(function(){
       expect(self.err).to.not.exist;
@@ -75,7 +75,7 @@ describe('e3x', function(){
 
   });
   it('does even odd', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.handshake()
      .then(function(){
@@ -99,7 +99,7 @@ describe('e3x', function(){
   });
 
   it('generates a handshake', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.handshake()
      .then(function (handshake){
@@ -115,7 +115,7 @@ describe('e3x', function(){
   });
 
   it('generates another handshake', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     var x = self.exchange({csid:'1a',key:pairsA['1a'].key});
     x.handshake()
      .then(function (handshake){
@@ -130,7 +130,7 @@ describe('e3x', function(){
   });
 
   it('decode a handshake', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     self.decrypt(handshakeAB)
         .then(function(inner){
           expect(Buffer.isBuffer(inner)).to.be.equal(true);
@@ -140,7 +140,7 @@ describe('e3x', function(){
   });
 
   it('not decode a handshake', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     self.decrypt(handshakeAB)
         .then(function(res){
           console.log("this should fail",res)
@@ -151,7 +151,7 @@ describe('e3x', function(){
   });
 
   it('verify a handshake', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     self.decrypt(handshakeAB)
         .then(function(inner){
           return self.exchange({csid:'1a',key:inner.body}).verify(handshakeAB);
@@ -163,7 +163,7 @@ describe('e3x', function(){
   });
 
   it('require sync from a handshake', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     self.decrypt(handshakeAB)
         .then(function(inner){
           return self.exchange({csid:'1a',key:inner.body}).sync(handshakeAB,{json:{}})
@@ -179,7 +179,7 @@ describe('e3x', function(){
   });
 
   it('be in sync from a handshake', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     var x;
     self.decrypt(handshakeAB)
         .then(function(inner){
@@ -197,7 +197,7 @@ describe('e3x', function(){
   });
 
   it('generate at, cache, and reset it', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     var x;
     self.decrypt(handshakeAB)
         .then(function(inner){
@@ -221,7 +221,7 @@ describe('e3x', function(){
   });
 
   it('sends a channel packet', function(done){
-    var self = e3x._self({pairs:pairsB});
+    var self = e3x.self({pairs:pairsB});
     var x;
     self.decrypt(handshakeAB)
         .then(function(inner){
@@ -241,8 +241,8 @@ describe('e3x', function(){
   });
 
   it('decrypts a channel packet', function(done){
-    var selfA = e3x._self({pairs:pairsA});
-    var selfB = e3x._self({pairs:pairsB});
+    var selfA = e3x.self({pairs:pairsA});
+    var selfB = e3x.self({pairs:pairsB});
     var xA = selfA.exchange({csid:'1a',key:pairsB['1a'].key});
     xA.handshake()
       .then(function(hsAB){
@@ -284,7 +284,7 @@ describe('e3x', function(){
   });
 
   it('creates an unreliable channel', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA)
       .then(function(at){
@@ -301,7 +301,7 @@ describe('e3x', function(){
   });
 
   it('creates a reliable channel', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA)
       .then(function(at){
@@ -313,7 +313,7 @@ describe('e3x', function(){
   });
 
   it('handles unreliable open', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}})
       .then(function(at){
@@ -331,7 +331,7 @@ describe('e3x', function(){
   });
 
   it('handles unreliable send', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}})
       .then(function(at){
@@ -348,7 +348,7 @@ describe('e3x', function(){
   });
 
   it('handles reliable open', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}})
       .then(function(at){
@@ -367,7 +367,7 @@ describe('e3x', function(){
   });
 
   it('handles reliable send', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     x.sync(handshakeBA,{json:{}})
       .then(function(at){
@@ -385,7 +385,7 @@ describe('e3x', function(){
   });
 
   it('handles channel error', function(done){
-    var self = e3x._self({pairs:pairsA});
+    var self = e3x.self({pairs:pairsA});
     var x = self.exchange({csid:'1a',key:pairsB['1a'].key});
     var c;
     x.sync(handshakeBA,{json:{}})

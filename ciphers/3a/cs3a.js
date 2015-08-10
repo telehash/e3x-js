@@ -9,19 +9,13 @@ exports.crypt = function(lib)
   sodium = lib;
 }
 
-exports.generate = function(cb)
-{
-  var kp = sodium.crypto_box_keypair();
-  cb(null, {key:kp.publicKey, secret:kp.secretKey});
-}
-
-exports._generate = function(){
+exports.generate = function(){
   var kp = sodium.crypto_box_keypair();
   return Promise.resolve({key:kp.publicKey, secret:kp.secretKey})
 }
 
-exports._Local = function(pair){
-  var local = new exports.Local(pair)
+exports.Local = function(pair){
+  var local = new exports._Local(pair)
   this.load = Promise.resolve()
   this.decrypt = function(body){
     var decrypted = local.decrypt(body);
@@ -32,8 +26,8 @@ exports._Local = function(pair){
   return this;
 }
 
-exports._Remote = function(key){
-  var remote = new exports.Remote(key)
+exports.Remote = function(key){
+  var remote = new exports._Remote(key)
   this.load = Promise.resolve()
   this.encrypt = function(a1, a2){
     console.log("encrypt3")
@@ -48,8 +42,8 @@ exports._Remote = function(key){
 
 }
 
-exports._Ephemeral = function(remote, body){
-  var ephemeral = new exports.Ephemeral(remote, body)
+exports.Ephemeral = function(remote, body){
+  var ephemeral = new exports._Ephemeral(remote, body)
   this.load = Promise.resolve()
   this.encrypt = function(body){
     return Promise.resolve(ephemeral.encrypt(body))
@@ -63,7 +57,7 @@ exports._Ephemeral = function(remote, body){
   return this;
 }
 
-exports.Local = function(pair)
+exports._Local = function(pair)
 {
   var self = this;
   try{
@@ -94,7 +88,7 @@ exports.Local = function(pair)
   };
 }
 
-exports.Remote = function(key)
+exports._Remote = function(key)
 {
   var self = this;
   try{
@@ -143,7 +137,7 @@ exports.Remote = function(key)
 
 }
 
-exports.Ephemeral = function(remote, body)
+exports._Ephemeral = function(remote, body)
 {
   var self = this;
 

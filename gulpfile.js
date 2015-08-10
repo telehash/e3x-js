@@ -49,7 +49,7 @@ gulp.task('dev', function() {
   ch.watchify(unitTests)
 
   ch.onresults = function(results){
-    console.log("tests complete", results)
+    //console.log("tests complete", results)
   }
 
   gulp.watch(unitTests.concat(srcFiles), ["mocha"])
