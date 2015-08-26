@@ -171,6 +171,7 @@ exports.self = function(args){
       var sid = handshake.slice(0,16).toString('hex'); // stable token bytes
       if(x.sid != sid)
       {
+        debug("update session")
         var session = new csets[csid].Ephemeral(cs, handshake.body);
         if(session.err) return x.error('session error: '+session.err);
         self.debug('new ephemeral');
@@ -179,8 +180,15 @@ exports.self = function(args){
         x.z = parseInt(inner.z);
         // free up any gone channels since id's can be re-used now
         Object.keys(x.channels).forEach(function(id){
-          if(x.channels[id].state == 'gone') delete x.channels[id];
+          if(x.channels[id].state == 'gone')
+            delete x.channels[id];
+
+
+
         });
+
+        //reset the cid as we can now re-use channel numbers;
+        cid = x.order
       }
 
       // make sure theirs is legit, or send a new one
