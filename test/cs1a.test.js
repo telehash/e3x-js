@@ -19,14 +19,14 @@ describe('cs1a', function(){
   });
 
   it('should grow a pair', function(done){
-    cs1a.generate(function(err, pair){
-      expect(err).to.not.exist;
+    cs1a.generate().then(function(pair){
+      console.log("GOT KEY", Buffer.isBuffer(pair.key), Buffer.isBuffer(pair.secret), pair.key.length, pair.secret.length)
       expect(pair).to.be.a('object');
       expect(Buffer.isBuffer(pair.key)).to.be.equal(true);
       expect(pair.key.length).to.be.equal(21);
       expect(Buffer.isBuffer(pair.secret)).to.be.equal(true);
       expect(pair.secret.length).to.be.equal(20);
-      done(err);
+      done();
     });
   });
 
@@ -50,10 +50,13 @@ describe('cs1a', function(){
   it('should local decrypt', function(){
     var local = new cs1a.Local(pairA);
     // created from remote encrypt
-    var inner = local.decrypt(mbodyBA);
-    expect(Buffer.isBuffer(inner)).to.be.equal(true);
-    expect(inner.length).to.be.equal(2);
-    expect(inner.toString('hex')).to.be.equal('0000');
+    local.decrypt(mbodyBA)
+         .then(function(inner){
+
+            expect(Buffer.isBuffer(inner)).to.be.equal(true);
+            expect(inner.length).to.be.equal(2);
+            expect(inner.toString('hex')).to.be.equal('0000');
+         });
   });
 
   it('should load a remote', function(){
@@ -63,48 +66,61 @@ describe('cs1a', function(){
     expect(remote.token.length).to.be.equal(16);
   });
 
-  it('should local encrypt', function(){
+  it('should local encrypt', function(done){
     var local = new cs1a.Local(pairA);
     var remote = new cs1a.Remote(pairB.key);
-    var message = remote.encrypt(local, new Buffer('0000','hex'));
-    expect(Buffer.isBuffer(message)).to.be.equal(true);
-    expect(message.length).to.be.equal(31);
+    remote.encrypt(local, new Buffer('0000','hex'))
+          .then(function(message){
+            expect(Buffer.isBuffer(message)).to.be.equal(true);
+            expect(message.length).to.be.equal(31);
+            done()
+          });
   });
 
-  it('should remote encrypt', function(){
+  it('should remote encrypt', function(done){
     var local = new cs1a.Local(pairB);
     var remote = new cs1a.Remote(pairA.key);
-    var message = remote.encrypt(local, new Buffer('0000','hex'));
-    expect(Buffer.isBuffer(message)).to.be.equal(true);
-    expect(message.length).to.be.equal(31);
+    remote.encrypt(local, new Buffer('0000','hex'))
+          .then(function(message){
+            expect(Buffer.isBuffer(message)).to.be.equal(true);
+            expect(message.length).to.be.equal(31);
+            done()
+          });
   });
 
   it('should remote verify', function(done){
     var local = new cs1a.Local(pairB);
     var remote = new cs1a.Remote(pairA.key);
-    var bool = remote.verify(local, mbodyAB);
+    remote.verify(local, mbodyAB)
+          .then(function(bool){
+              expect(bool).to.be.equal(true);
+              done()
+          });
 
-    expect(bool).to.be.equal(true);
-    remote._verify(local,mbodyAB)
-          .then(function(){
-            done();
-          })
-          .catch(console.log.bind(console));
   });
 
   it('should dynamically encrypt, decrypt, and verify', function(){
     var local = new cs1a.Local(pairA);
     var remote = new cs1a.Remote(pairB.key);
     var inner = new Buffer('4242','hex');
-    var outer = remote.encrypt(local, inner);
 
-    // now invert them to decrypt
-    var local = new cs1a.Local(pairB);
-    var remote = new cs1a.Remote(pairA.key);
-    expect(local.decrypt(outer).toString('hex')).to.be.equal(inner.toString('hex'));
+    remote.encrypt(local, inner)
+          .then(function(out){
+            outer = out;
 
-    // verify sender
-    expect(remote.verify(local,outer)).to.be.equal(true);
+            local = new cs1a.Local(pairB);
+            remote = new cs1a.Remote(pairA.key);
+            return local.decrypt(out);
+          })
+          .then(function(inn){
+            expect(inn.toString("hex")).to.be.equal(inner.toString('hex'))
+            return remote.verify(local,outer)
+          })
+          .then(function(bool){
+            expect(bool).to.be.equal(true);
+            done()
+          })
+
   });
 
   it('should load an ephemeral', function(){
@@ -114,24 +130,52 @@ describe('cs1a', function(){
     expect(ephemeral.encrypt).to.be.a('function');
   });
 
-  it('ephemeral local encrypt', function(){
+  it('ephemeral local encrypt', function(done){
     var remote = new cs1a.Remote(pairB.key);
     var ephemeral = new cs1a.Ephemeral(remote, mbodyBA);
-    var channel = ephemeral.encrypt(new Buffer('0000','hex'));
-    expect(Buffer.isBuffer(channel)).to.be.equal(true);
-    expect(channel.length).to.be.equal(10);
+    ephemeral.encrypt(new Buffer('0000','hex'))
+             .then(function(channel){
+               expect(Buffer.isBuffer(channel)).to.be.equal(true);
+               expect(channel.length).to.be.equal(10);
+               done()
+             });
   });
 
-  it('ephemeral full', function(){
+  it('ephemeral full', function(done){
     // handshake one direction
     var localA = new cs1a.Local(pairA);
     var remoteB = new cs1a.Remote(pairB.key);
-    var messageBA = remoteB.encrypt(localA, new Buffer('0000','hex'),1);
 
-    // receive it and make ephemeral and reply
+
     var localB = new cs1a.Local(pairB);
     var remoteA = new cs1a.Remote(pairA.key);
-    var ephemeralBA = new cs1a.Ephemeral(remoteA, messageBA);
+
+    var ephemeralBA, ephemeralAB, channelAB;
+
+    remoteB.encrypt(localA, new Buffer('0000','hex'),1)
+           .then(function(messageBA){
+             ephemeralBA = new cs1a.Ephemeral(remoteA, messageBA);
+             return remoteA.encrypt(localB, new Buffer('0000','hex'),1)
+           })
+           .then(function(messageAB){
+
+             ephemeralAB = new cs1a.Ephemeral(remoteB, messageAB);
+             return ephemeralAB.encrypt(new Buffer("4242","hex"));
+           })
+           .then(function(chan){
+             channelAB = chan;
+             return ephemeralBA.decrypt(channelAB);
+           })
+           .then(function(body){
+
+             expect(Buffer.isBuffer(body)).to.be.equal(true);
+             expect(body.length).to.be.equal(2);
+             expect(body.toString('hex')).to.be.equal('4242');
+             done()
+           });
+
+    // receive it and make ephemeral and reply
+      /*
     var messageAB = remoteA.encrypt(localB, new Buffer('0000','hex'),1);
 
     // make other ephemeral and encrypt
@@ -140,9 +184,7 @@ describe('cs1a', function(){
 
     // decrypt?
     var body = ephemeralBA.decrypt(channelAB);
-    expect(Buffer.isBuffer(body)).to.be.equal(true);
-    expect(body.length).to.be.equal(2);
-    expect(body.toString('hex')).to.be.equal('4242');
+    */
   });
 
 });
