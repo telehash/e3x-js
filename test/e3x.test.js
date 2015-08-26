@@ -391,16 +391,13 @@ describe('e3x', function(){
       .then(function(at){
         var open = {json:{c:x.cid(),type:'test'}};
         c = x.channel(open);
-        console.log("err there")
         x.sending = function(pack){
 
         }
         return c.send(open);
       }).then(function(){
-        console.log("err here?")
         return c.send({json:{err:'bad'}});
       }).then(function(){
-        console.log("SEND RETURNS AFTER sending err?")
         expect(c.err).to.be.equal('bad');
         done();
       }).catch(function(er){
