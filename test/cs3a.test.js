@@ -175,7 +175,7 @@ describe('cs3a', function(){
           })
   });
 
-  it('ephemeral full', function(){
+  it('ephemeral full', function(done){
     // handshake one direction
     var localA = new cs3a.Local(pairA);
     var remoteB = new cs3a.Remote(pairB.key);
