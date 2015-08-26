@@ -372,7 +372,6 @@ describe('e3x', function(){
     x.sync(handshakeBA,{json:{}})
       .then(function(at){
         x.sending = function(buf){
-          console.log("SENDING", buf)
           x.sending = function(){}
           expect(Buffer.isBuffer(buf)).to.be.true;
           expect(buf.length).to.be.equal(57);
