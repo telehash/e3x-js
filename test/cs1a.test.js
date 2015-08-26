@@ -99,7 +99,7 @@ describe('cs1a', function(){
 
   });
 
-  it('should dynamically encrypt, decrypt, and verify', function(){
+  it('should dynamically encrypt, decrypt, and verify', function(done){
     var local = new cs1a.Local(pairA);
     var remote = new cs1a.Remote(pairB.key);
     var inner = new Buffer('4242','hex');
