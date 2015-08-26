@@ -189,6 +189,8 @@ self.exchange = function(args)
            if(x.channels[id].state == 'gone')
              delete x.channels[id];
          });
+         //reset the cid counter on account of new session
+         cid = x.order;
        }
 
        // make sure theirs is legit, or send a new one
