@@ -29,37 +29,42 @@ if(ursa)
 {
   exports.generate = function(cb)
   {
-    var kpair = ursa.generatePrivateKey();
-    var key = str2der(kpair.toPublicPem("utf8"));
-    var secret = str2der(kpair.toPrivatePem("utf8"));
-    cb(null,{key:key,secret:secret});
+    return new Promise(function (resolve,reject){
+      var kpair = ursa.generatePrivateKey();
+      var key = str2der(kpair.toPublicPem("utf8"));
+      var secret = str2der(kpair.toPrivatePem("utf8"));
+      resolve({key:key,secret:secret});
+    })
   }
 
   exports.loadkey = function(id, key, secret)
   {
     // TODO, figure out why ursa is rejecting valid pub keys, workaround is using forge
-    var pkf = forge.pki.publicKeyFromAsn1(forge.asn1.fromDer(key.toString("binary")));     var pem = forge.pki.publicKeyToPem(pkf);
-    var pk = ursa.coercePublicKey(pem);
-//    var pk = ursa.coercePublicKey(der2pem(key,"PUBLIC"));
-    if(!pk) return true;
-    if(pk.getModulus().length != 256) return true;
-    id.encrypt = function(buf){
-      return pk.encrypt(buf, undefined, undefined, ursa.RSA_PKCS1_OAEP_PADDING);
-    };
-    id.verify = function(a,b){
-      return pk.hashAndVerify("sha256", a, b);
-    };
-    if(secret)
-    {
-      var sk = ursa.coercePrivateKey(der2pem(secret,"RSA PRIVATE"));
-      id.sign = function(buf){
-        return sk.hashAndSign("sha256", buf);
+    return new Promise(function(resolve,reject){
+      var pkf = forge.pki.publicKeyFromAsn1(forge.asn1.fromDer(key.toString("binary")));
+      var pem = forge.pki.publicKeyToPem(pkf);
+      var pk = ursa.coercePublicKey(pem);
+  //    var pk = ursa.coercePublicKey(der2pem(key,"PUBLIC"));
+      if(!pk) return true;
+      if(pk.getModulus().length != 256) return true;
+      id.encrypt = function(buf){
+        return Promise.resolve(pk.encrypt(buf, undefined, undefined, ursa.RSA_PKCS1_OAEP_PADDING));
       };
-      id.decrypt = function(buf){
-        return sk.decrypt(buf, undefined, undefined, ursa.RSA_PKCS1_OAEP_PADDING);
+      id.verify = function(a,b){
+        return Promise.resolve(pk.hashAndVerify("sha256", a, b));
       };
-    }
-    return undefined;
+      if(secret)
+      {
+        var sk = ursa.coercePrivateKey(der2pem(secret,"RSA PRIVATE"));
+        id.sign = function(buf){
+          return Promise.resolve(sk.hashAndSign("sha256", buf));
+        };
+        id.decrypt = function(buf){
+          return Promise.resolve(sk.decrypt(buf, undefined, undefined, ursa.RSA_PKCS1_OAEP_PADDING));
+        };
+      }
+      resolve();
+    })
   }
 }
 
