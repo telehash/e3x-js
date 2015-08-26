@@ -16,6 +16,9 @@ exports.generate = function(){
 
 exports.Local = function(pair){
   var local = new exports._Local(pair)
+  this.err = local.err;
+  this.secret = local.secret;
+
   this.load = Promise.resolve()
   this.decrypt = function(body){
     var decrypted = local.decrypt(body);
@@ -28,9 +31,10 @@ exports.Local = function(pair){
 
 exports.Remote = function(key){
   var remote = new exports._Remote(key)
+  this.token = remote.token;
   this.load = Promise.resolve()
+  this.ephemeral = remote.ephemeral;
   this.encrypt = function(a1, a2){
-    console.log("encrypt3")
     return Promise.resolve(remote.encrypt(a1, a2))
   }
 
@@ -46,7 +50,8 @@ exports.Ephemeral = function(remote, body){
   var ephemeral = new exports._Ephemeral(remote, body)
   this.load = Promise.resolve()
   this.encrypt = function(body){
-    return Promise.resolve(ephemeral.encrypt(body))
+    var encrypted = ephemeral.encrypt(body);
+    return (encrypted) ? Promise.resolve(encrypted) : Promise.reject(new Error("cs3a ephemeral encrypt failed"))
   }
 
   this.decrypt = function(body){
@@ -180,7 +185,6 @@ exports._Ephemeral = function(remote, body)
     var nonce = crypto.randomBytes(24);
     var cbody = sodium.crypto_secretbox(inner, nonce, self.encKey);
     cbody = cbody.slice(sodium.crypto_secretbox_BOXZEROBYTES); // remove zeros from nacl's api
-
     // return final body
     return Buffer.concat([nonce,cbody]);
   };
