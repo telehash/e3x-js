@@ -174,12 +174,15 @@ self.exchange = function(args)
   //PROMISE
   x.sync = function(handshake, inner){
     if(!handshake) return Promise.resolve(false);
+    var inner;
     x.session = x.session || true;
 
     var getInner = (!inner) ? self.decrypt(handshake) : Promise.resolve(inner);
-    x.sessioner = getInner.then(function(inner){
+    x.sessioner = getInner.then(function(inn){
+      inner = inn;
       return x.verify(handshake)
     }).then(function(ver){
+
      if (!ver)
        throw new Error("handshake failed to verify")
 
