@@ -49,6 +49,7 @@ exports.Remote = function(key){
 exports.Ephemeral = function(remote, body){
   var ephemeral = new exports._Ephemeral(remote, body)
   this.load = Promise.resolve()
+  this.token = ephemeral.token;
   this.encrypt = function(body){
     var encrypted = ephemeral.encrypt(body);
     return (encrypted) ? Promise.resolve(encrypted) : Promise.reject(new Error("cs3a ephemeral encrypt failed"))

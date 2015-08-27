@@ -138,8 +138,9 @@ self.exchange = function(args)
   x.receive = function(packet){
     if(!lob.isPacket(packet) || packet.head.length !== 0) return x.error('invalid packet');
     if(!x.session) return x.error('handshake sync required');
-    return x.session.decrypt(packet.body.slice(16))
-                    .then(lob.decode);
+    return x.sessioner.then(function(){
+      return x.session.decrypt(packet.body.slice(16))
+    }).then(lob.decode);
   };
 
   //PROMISE
@@ -156,7 +157,9 @@ self.exchange = function(args)
 
     return x.load.then(function(){
       //console.log("loaded")
-       return x.session.encrypt(inner);
+       return x.sessioner;
+     }).then(function(){
+       return x.session.encrypt(inner)
      }).then(function(enc){
        ////console.log("x.session.token", x.session.token.toString("hex"))
        return lob.packet(null, Buffer.concat([x.session.token,enc]));
@@ -171,44 +174,49 @@ self.exchange = function(args)
   //PROMISE
   x.sync = function(handshake, inner){
     if(!handshake) return Promise.resolve(false);
+    x.session = x.session || true;
+
     var getInner = (!inner) ? self.decrypt(handshake) : Promise.resolve(inner);
-    return getInner.then(function(inner){
-      return x.verify(handshake).then(function(ver){
-       if (!ver)
-         throw new Error("handshake failed to verify")
+    x.sessioner = getInner.then(function(inner){
+      return x.verify(handshake)
+    }).then(function(ver){
+     if (!ver)
+       throw new Error("handshake failed to verify")
 
-       var sid = handshake.slice(0,16).toString('hex'); // stable token  bytes
-       if(x.sid != sid)
-       {
-         //console.log("new ephemeral")
-         x.session = new csets[csid].Ephemeral(cs, handshake.body);
-         x.sid = sid;
-         x.z = parseInt(inner.z);
-         // free up any gone channels since id's can be re-used now
-         Object.keys(x.channels).forEach(function(id){
-           if(x.channels[id].state == 'gone')
-             delete x.channels[id];
-         });
-         //reset the cid counter on account of new session
-         cid = x.order;
-       }
+     var sid = handshake.slice(0,16).toString('hex'); // stable token  bytes
+     if(x.sid != sid)
+     {
+       //console.log("new ephemeral")
+       x.session = new csets[csid].Ephemeral(cs, handshake.body);
+       x.sid = sid;
+       x.z = parseInt(inner.z);
+       // free up any gone channels since id's can be re-used now
+       Object.keys(x.channels).forEach(function(id){
+         if(x.channels[id].state == 'gone')
+           delete x.channels[id];
+       });
+       //reset the cid counter on account of new session
+       cid = x.order;
 
-       // make sure theirs is legit, or send a new one
-       if((typeof inner.json.at != 'number') || (inner.json.at % 2 === 0 && x.order == 2))
-         return false;
+     }
 
-       // do nothing if we're in sync
-       if(x._at === inner.json.at)
-         return true;
-
-       // if they're higher, save it as the best
-       if(x._at < inner.json.at)
-         x._at = inner.json.at;
-
-       // signal to send a handshake
+     // make sure theirs is legit, or send a new one
+     if((typeof inner.json.at != 'number') || (inner.json.at % 2 === 0 && x.order == 2))
        return false;
-     });
-   });
+
+     // do nothing if we're in sync
+     if(x._at === inner.json.at)
+       return true;
+
+     // if they're higher, save it as the best
+     if(x._at < inner.json.at)
+       x._at = inner.json.at;
+
+     // signal to send a handshake
+     return false;
+   });;
+
+   return x.sessioner;
   };
 
   // resend any packets we can
@@ -264,6 +272,7 @@ self.exchange = function(args)
   };
 
   x.channel = function(open){
+    debug("new channel", open)
     if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string') return x.error('invalid open');
 
     // be friendly
@@ -348,6 +357,7 @@ self.exchange = function(args)
       // if it's an incoming error, bail hard/fast
       if(packet.json.err)
       {
+        debug("chan.receive  json err", packet.json.err)
         chan.inq = {}; // delete all incoming
         chan.err = packet.json.err;
         chan.receiving(chan.err, packet, function(){});
@@ -360,10 +370,13 @@ self.exchange = function(args)
       // unreliable is easy, make our own sequence for the delivery flow
       if(!chan.reliable)
       {
+        debug("unreliable channel", packet.json)
         chan.inq[chan.inSeq] = packet;
         chan.inSeq++;
         return deliver();
       }
+
+      debug("reliable channel")
 
       // process any valid newer incoming ack/miss
       var ack = parseInt(packet.json.ack);
@@ -401,7 +414,7 @@ self.exchange = function(args)
 
       // don't process packets w/o a seq, no batteries included
       var seq = parseInt(packet.json.seq);
-      if(!(seq > 0)) return;
+      if(!(seq > 0)) return debug("dropping packet with no seq", packet.json);
 
       // drop duplicate packets, always force an ack
       if(seq <= chan.inDone || chan.inq[seq]) return chan.forceAck = true;
