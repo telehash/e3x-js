@@ -9,7 +9,7 @@ try {
   if(process.env.PURE == 'true') throw new Error("pure requested");
   var ecc = require("ecc-qj");
 }catch(E){
-  console.log("ecc?", E)
+  //console.log("ecc?", E)
   var ecc = require("ecc-jsbn")
 }
 
@@ -18,7 +18,7 @@ try {
   if(process.env.PURE == 'true') throw new Error("pure requested");
   var ursa = require("ursa");
 }catch(E){
-  console.log("ursa?", E)
+  //console.log("ursa?", E)
 }
 
 // load node-specific crypto methods
