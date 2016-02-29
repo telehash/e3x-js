@@ -67,7 +67,7 @@ self.decrypt = function(message)
        : (!self.locals[csid])          ? Promise.reject(new Error("unsupported Cipher Set"))
        : (self.locals[csid].decrypt(message.body).then(function(inner){
            var decoded = lob.decode(inner);
-           if (!decoded) throw new Error("handshake invalid")
+           if (!decoded) throw new Error("handshake invalid, inner : " + inner.toString())
            return decoded;
          }));
 }
@@ -136,8 +136,8 @@ self.exchange = function(args)
 
   //PROMISE
   x.receive = function(packet){
-    if(!lob.isPacket(packet) || packet.head.length !== 0) return x.error('invalid packet');
-    if(!x.session) return x.error('handshake sync required');
+    if(!lob.isPacket(packet) || packet.head.length !== 0) return Promise.reject(x.error('invalid packet'));
+    if(!x.session) return Promise.reject(x.error('handshake sync required'));
     return x.sessioner.then(function(){
       return x.session.decrypt(packet.body.slice(16))
     }).then(lob.decode);
@@ -189,7 +189,7 @@ self.exchange = function(args)
      var sid = handshake.slice(0,16).toString('hex'); // stable token  bytes
      if(x.sid != sid)
      {
-       //console.log("new ephemeral")
+       console.log("new ephemeral")
        x.session = new csets[csid].Ephemeral(cs, handshake.body);
        x.sid = sid;
        x.z = parseInt(inner.z);
@@ -276,7 +276,7 @@ self.exchange = function(args)
 
   x.channel = function(open){
     debug("new channel", open)
-    if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string') return x.error('invalid open');
+    if(typeof open != 'object' || typeof open.json != 'object' || typeof open.json.type != 'string') return Promise.reject(x.error('invalid open'));
 
     // be friendly
     if(typeof open.json.c != 'number') open.json.c = x.cid();

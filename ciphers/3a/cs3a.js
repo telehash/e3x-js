@@ -89,7 +89,7 @@ exports._Local = function(pair)
     // decipher the inner
     var zeros = new Buffer(Array(sodium.crypto_secretbox_BOXZEROBYTES)); // add zeros for nacl's api
     var inner = sodium.crypto_secretbox_open(Buffer.concat([zeros,innerc]),nonce,secret);
-
+    //console.log("SODIUM", inner)
     return inner;
   };
 }
