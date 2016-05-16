@@ -1,5 +1,4 @@
 var NodeCrypto = require("crypto");
-var sjcl = require("sjcl");
 var subtle = require("subtle")
   , pkcsPad1  = new Buffer([48, 130])
   , pkcsPad2  = new Buffer([2, 1, 0, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 4, 130])
