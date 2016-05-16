@@ -2,7 +2,7 @@
   "name": "e3x",
   "description": "End-to-End Encrypted eXchange",
   "homepage": "https://github.com/telehash/e3x-js",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "dependencies": {
     "debug": "^2.2.0",
     "subtle": "^0.1.2",
